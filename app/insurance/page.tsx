@@ -575,6 +575,32 @@ function AssistantMessage({ msg }: { msg: Message }) {
  <div className="bg-green-50 rounded-lg p-3"><p className="text-xs font-bold text-green-700 mb-1">PROJECTED (Non-Guaranteed)</p><p className="text-xs text-gray-600 whitespace-pre-line">{msg.projected_meaning}</p></div>
  <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2"><p className="text-xs text-amber-700 whitespace-pre-line">{msg.disclaimer}</p></div>
  </div>);
+ case 'ai_recommendation': return (
+ <div className="space-y-4">
+ {msg.content && <p className="text-sm text-gray-700 whitespace-pre-line">{msg.content as string}</p>}
+ {msg.gap && (
+ <div className="border border-gray-200 rounded-xl p-4 bg-gray-50 space-y-3">
+ <p className="text-sm font-semibold text-gray-700">Protection Gap Analysis</p>
+ {renderGapBar('Life', ((msg.gap as Record<string, Record<string, number>>)?.life?.required) || 0, ((msg.gap as Record<string, Record<string, number>>)?.life?.gap) || 0)}
+ {renderGapBar('Critical Illness', ((msg.gap as Record<string, Record<string, number>>)?.ci?.required) || 0, ((msg.gap as Record<string, Record<string, number>>)?.ci?.gap) || 0, 'bg-rose-500')}
+ {renderGapBar('Medical / Hospital', ((msg.gap as Record<string, Record<string, number>>)?.medical?.required) || 0, ((msg.gap as Record<string, Record<string, number>>)?.medical?.gap) || 0, 'bg-amber-500')}
+ </div>
+ )}
+ {msg.products && (msg.products as Array<{ rank: number; product: Product; advisorNote?: string }>).length > 0 && renderProducts(msg.products as Array<{ rank: number; product: Product; advisorNote?: string }>)}
+ {msg.concerns && (msg.concerns as string[]).length > 0 && (
+ <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+ <p className="text-xs font-semibold text-amber-700 mb-1">Concerns</p>
+ {((msg.concerns as string[]) || []).map((c, i) => <p key={i} className="text-xs text-amber-700">• {c}</p>)}
+ </div>
+ )}
+ {msg.nextSteps && (msg.nextSteps as string[]).length > 0 && (
+ <div className="bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-2">
+ <p className="text-xs font-semibold text-indigo-700 mb-1">Next Steps</p>
+ {((msg.nextSteps as string[]) || []).map((s, i) => <p key={i} className="text-xs text-indigo-700">• {s}</p>)}
+ </div>
+ )}
+ </div>
+ );
  case 'product_detail': return (
  <div className="space-y-3">
  <p className="text-sm text-gray-700">{msg.message}</p>
@@ -854,13 +880,49 @@ export default function InsurancePage() {
  setInput('');
  setLoading(true);
  try {
- const res = await fetch(`${API}/api/insurance/chat`, {
+ // Agentic MiniMax route — sends full client profile + product catalog
+ const res = await fetch(`${API}/api/insurance/recommend`, {
  method: 'POST', headers: { 'Content-Type': 'application/json' },
- body: JSON.stringify({ sessionId: sessionId || undefined, query: text }),
+ body: JSON.stringify({
+ sessionId: sessionId || undefined,
+ query: text,
+ client: analysisResult ? analysisResult.client : {
+ name: clientName, age: clientAge, gender: clientGender,
+ income: clientIncome || 0, monthlyBudget: clientBudget || 500,
+ dependents: clientDependents, goals: clientGoals,
+ existingPolicies: existingPolicies.length > 0 ? existingPolicies : [],
+ },
+ }),
  });
  const data = await res.json();
  if (!res.ok) throw new Error(data.error || 'Failed to get response');
- const assistantMsg: Message = { id: nanoid(), role: 'assistant', type: data.type, ...data };
+
+ // Render MiniMax's structured JSON response
+ const assistantMsg: Message = {
+ id: nanoid(), role: 'assistant', type: 'ai_recommendation',
+ content: data.summary || data.rawText || JSON.stringify(data, null, 2),
+ gap: data.gapAnalysis,
+ products: (data.recommendations || []).map((r: Record<string, unknown>, i: number) => ({
+ rank: i + 1,
+ product: {
+ id: String(r.productId || ''),
+ productName: String(r.productName || r.name || ''),
+ provider: String(r.provider || ''),
+ policyType: String(r.category || ''),
+ monthlyPremium: 0, annualPremium: 0, lifeCover10y: 0, lifeCover20y: 0,
+ lifeCover30y: 0, ciCover: 0, medicalCover: 0, isTakaful: false,
+ guaranteedCash10y: 0, guaranteedCash20y: 0, guaranteedCash30y: 0,
+ projectedCash10y: 0, projectedCash20y: 0, projectedCash30y: 0,
+ paymentTermYears: 0, coverageFeatures: (r.keySellingPoints as string[]) || [],
+ productSummary: String(r.reason || ''),
+ },
+ advisorNote: String(r.reason || ''),
+ })),
+ concerns: data.concerns,
+ nextSteps: data.nextSteps,
+ sessionId: data.sessionId,
+ };
+ if (data.sessionId) setSessionId(data.sessionId as string);
  setMessages(prev => [...prev, assistantMsg]);
  } catch (err) {
  toast.error((err as Error).message);
@@ -868,7 +930,7 @@ export default function InsurancePage() {
  } finally {
  setLoading(false);
  }
- }, [loading, sessionId]);
+ }, [loading, sessionId, analysisResult, clientName, clientAge, clientGender, clientIncome, clientBudget, clientDependents, clientGoals, existingPolicies]);
 
  const handleICExtracted = useCallback((data: { name: string; icNumber: string; dob: string; age: number; gender: string; nationality: string }) => {
  setClientName(data.name);

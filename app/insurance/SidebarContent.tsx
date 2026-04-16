@@ -62,7 +62,7 @@ function ICScanUpload({ onExtracted }: { onExtracted: (data: { name: string; icN
   const handleFile = useCallback(async (file: File) => {
     if (!file.type.startsWith('image/')) { setError('Please upload an image (JPG, PNG, WebP)'); return; }
     if (file.size > 10 * 1024 * 1024) { setError('File size must be under 10MB'); return; }
-    setError(''); setPreview(URL.createObjectURL(file)); setPhase('downloading'); setProgressMsg('Starting OCR engine…');
+    setError(''); setPreview(URL.createObjectURL(file)); setPhase('downloading'); setProgressMsg('Starting OCR engine...');
     try {
       const API = process.env.NEXT_PUBLIC_API_URL || '';
       const fd = new FormData();
@@ -85,7 +85,7 @@ function ICScanUpload({ onExtracted }: { onExtracted: (data: { name: string; icN
           if (di >= lines.length || !lines[di].startsWith('data: ')) continue;
           const payload = JSON.parse(lines[di].slice(6));
           if (evt === 'phase' && payload.phase === 'initialising') {
-            setPhase('downloading'); setProgressMsg(payload.message || 'Setting up…');
+            setPhase('downloading'); setProgressMsg(payload.message || 'Setting up...');
           } else if (evt === 'done') {
             const d = payload.data as Record<string, unknown>;
             const rawIC = (d.icNumber as string) || (d.ic_number as string) || '';
@@ -136,7 +136,7 @@ function ICScanUpload({ onExtracted }: { onExtracted: (data: { name: string; icN
         {preview ? (
           <div className="space-y-1">
             <img src={preview} alt="IC" className="max-h-28 mx-auto rounded-lg object-contain border border-gray-200 shadow-sm" />
-            {phase === 'done' && <p className="text-xs text-green-600 font-medium">✓ Scan complete{confidence != null ? ` — ${(confidence * 100).toFixed(0)}% confidence` : ''}</p>}
+            {phase === 'done' && <p className="text-xs text-green-600 font-medium">a Scan complete{confidence != null ? `  ${(confidence * 100).toFixed(0)}% confidence` : ''}</p>}
             <button type="button" onClick={(e) => { e.stopPropagation(); setPhase('idle'); setError(''); setPreview(null); setConfidence(null); }}
               className="text-xs text-gray-500 hover:text-red-500 transition">Remove & re-upload</button>
           </div>
@@ -144,14 +144,14 @@ function ICScanUpload({ onExtracted }: { onExtracted: (data: { name: string; icN
           <div className="flex flex-col items-center gap-1 py-1">
             <Camera className="w-5 h-5 text-indigo-500" />
             <p className="text-xs font-medium text-gray-600">{isDragActive ? 'Drop IC here' : 'Click or drag MyKad'}</p>
-            <p className="text-xs text-gray-400">JPG, PNG, WebP — max 10MB</p>
+            <p className="text-xs text-gray-400">JPG, PNG, WebP a" max 10MB</p>
           </div>
         )}
       </div>
       {phase === 'downloading' && (
         <div className="flex items-center gap-2 bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-2 text-indigo-700 text-xs">
           <Loader2 className="w-3.5 h-3.5 animate-spin flex-shrink-0" />
-          <span>{progressMsg || 'Downloading OCR models…'}</span>
+          <span>{progressMsg || 'Downloading OCR modelsa...'}</span>
         </div>
       )}
       {phase === 'error' && (
@@ -266,7 +266,7 @@ export function SidebarContent({ sessionId, onAnalysisComplete }: SidebarContent
           onClick={() => setIntakeOpen(!intakeOpen)}
           className="text-xs text-gray-400 hover:text-gray-600"
         >
-          {intakeOpen ? '▲' : '▼'}
+          {intakeOpen ? 'a-2' : 'a-1/4'}
         </button>
       </div>
 
@@ -286,7 +286,7 @@ export function SidebarContent({ sessionId, onAnalysisComplete }: SidebarContent
               value={clientName}
               onChange={e => setClientName(e.target.value)}
               placeholder="e.g. Ahmad bin Ali"
-              className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-300"
+              className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-300 placeholder:text-gray-400 text-gray-900"
             />
           </div>
 
@@ -299,7 +299,7 @@ export function SidebarContent({ sessionId, onAnalysisComplete }: SidebarContent
                 value={clientIC}
                 onChange={e => setClientIC(e.target.value)}
                 placeholder="e.g. 901203-14-1234"
-                className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-300"
+                className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-300 placeholder:text-gray-400 text-gray-900"
               />
             </div>
             <div>
@@ -308,7 +308,7 @@ export function SidebarContent({ sessionId, onAnalysisComplete }: SidebarContent
                 type="date"
                 value={clientDOB}
                 onChange={e => setClientDOB(e.target.value)}
-                className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-300"
+                className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-300 text-gray-900"
               />
             </div>
           </div>
@@ -322,7 +322,7 @@ export function SidebarContent({ sessionId, onAnalysisComplete }: SidebarContent
                 value={clientAge || ''}
                 onChange={e => setClientAge(parseInt(e.target.value) || 0)}
                 placeholder="0"
-                className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-300"
+                className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-300 placeholder:text-gray-400 text-gray-900"
               />
             </div>
             <div>
@@ -330,9 +330,9 @@ export function SidebarContent({ sessionId, onAnalysisComplete }: SidebarContent
               <select
                 value={clientGender}
                 onChange={e => setClientGender(e.target.value)}
-                className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-300 bg-white"
+                className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-300 bg-white text-gray-900"
               >
-                <option value="">Select</option>
+                <option value="" className="text-gray-400">Select</option>
                 <option value="Male">Male</option>
                 <option value="Female">Female</option>
               </select>
@@ -347,7 +347,7 @@ export function SidebarContent({ sessionId, onAnalysisComplete }: SidebarContent
               value={clientIncome || ''}
               onChange={e => setClientIncome(parseInt(e.target.value) || undefined)}
               placeholder="e.g. 60000"
-              className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-300"
+              className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-300 placeholder:text-gray-400 text-gray-900"
             />
           </div>
 
@@ -358,7 +358,7 @@ export function SidebarContent({ sessionId, onAnalysisComplete }: SidebarContent
               type="number"
               value={clientBudget}
               onChange={e => setClientBudget(parseInt(e.target.value) || 500)}
-              className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-300"
+              className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-300 placeholder:text-gray-400 text-gray-900"
             />
           </div>
 
@@ -370,7 +370,7 @@ export function SidebarContent({ sessionId, onAnalysisComplete }: SidebarContent
               value={clientDependents}
               onChange={e => setClientDependents(parseInt(e.target.value) || 0)}
               min="0"
-              className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-300"
+              className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-300 text-gray-900"
             />
           </div>
 
@@ -382,7 +382,7 @@ export function SidebarContent({ sessionId, onAnalysisComplete }: SidebarContent
               value={clientGoals}
               onChange={e => setClientGoals(e.target.value)}
               placeholder="e.g. Education, Family Protection"
-              className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-300"
+              className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-300 placeholder:text-gray-400 text-gray-900"
             />
           </div>
 
@@ -424,7 +424,7 @@ export function SidebarContent({ sessionId, onAnalysisComplete }: SidebarContent
                   onClick={() => handleRemovePolicy(index)}
                   className="text-xs text-red-400 hover:text-red-600"
                 >
-                  ✕
+                  a   
                 </button>
               </div>
             ))}
@@ -439,7 +439,7 @@ export function SidebarContent({ sessionId, onAnalysisComplete }: SidebarContent
             disabled={analysisLoading}
             className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 text-white text-xs font-semibold py-2.5 rounded-xl transition flex items-center justify-center gap-2"
           >
-            {analysisLoading ? 'Analyzing…' : 'Start Analysis'}
+            {analysisLoading ? 'Analyzinga...' : 'Start Analysis'}
           </button>
         </>
       )}
@@ -452,11 +452,11 @@ export function SidebarContent({ sessionId, onAnalysisComplete }: SidebarContent
             onClick={() => setHistoryOpen(!historyOpen)}
             className="text-xs text-gray-400 hover:text-gray-600"
           >
-            {historyOpen ? '▲' : '▼'}
+            {historyOpen ? 'a-2' : 'a-1/4'}
           </button>
         </div>
         {historyOpen && (
-          <p className="text-xs text-gray-400 mt-1 italic">Loading sessions…</p>
+          <p className="text-xs text-gray-400 mt-1 italic">Loading sessionsa...</p>
         )}
       </div>
     </div>

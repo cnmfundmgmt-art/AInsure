@@ -6,6 +6,29 @@ import { spawn } from 'child_process';
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
+import { spawn as pySpawn } from 'child_process';
+
+// ─── Preprocessing (Python/OpenCV) ──────────────────────────────────────────
+// Runs preprocess_ic.py to remove horizontal strike-through lines from IC photos
+// before Tesseract runs. Returns path to preprocessed temp image.
+async function preprocessImage(imagePath: string, tmpDir: string): Promise<string> {
+  const scriptPath = path.join(process.cwd(), 'preprocess_ic.py');
+  if (!fs.existsSync(scriptPath)) {
+    // Skip preprocessing if script not found
+    return imagePath;
+  }
+  return new Promise((resolve, reject) => {
+    const outPath = path.join(tmpDir, `cfp-prep-${Date.now()}.jpg`);
+    const py = pySpawn('python', [scriptPath, imagePath, outPath], { cwd: process.cwd() });
+    let stderr = '';
+    py.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
+    py.on('close', (code: number) => {
+      if (code === 0 && fs.existsSync(outPath)) resolve(outPath);
+      else { console.warn('[preprocess] skipped, using original:', stderr || `exit ${code}`); resolve(imagePath); }
+    });
+    py.on('error', () => resolve(imagePath));
+  });
+}
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -244,13 +267,44 @@ export async function extractMyKad(imageBuffer: Buffer): Promise<ExtractionResul
   const tmpPath = path.join(tmpDir, 'cfp-ic-' + ts + '.jpg');
   const outBase = path.join(tmpDir, 'cfp-ic-' + ts);
   fs.writeFileSync(tmpPath, imageBuffer);
+  let preprocessedPath: string | null = null;
 
   try {
-    const rawText = (await execTesseract(
+    // ── Step 1: Run Tesseract on ORIGINAL (clean) image first ───────────────
+    let rawText = (await execTesseract(
       process.env.TESSERACT_PATH || 'tesseract',
       [tmpPath, outBase, '--oem', '1', '--psm', '4', '-l', 'mal+eng', 'txt'],
       tmpDir,
     )).trim();
+
+    // ── Step 2: Try PSM 6 if no IC number found with PSM 4 ───────────────────
+    if (!rawText.match(/\d{6}\s*-\s*\d{2}\s*-\s*\d{4}/)) {
+      const altText = (await execTesseract(
+        process.env.TESSERACT_PATH || 'tesseract',
+        [tmpPath, outBase + '_alt', '--oem', '1', '--psm', '6', '-l', 'mal+eng', 'txt'],
+        tmpDir,
+      )).trim();
+      if (altText.trim().length > rawText.length) {
+        rawText = altText.trim();
+        try { fs.unlinkSync(outBase + '_alt.txt'); } catch {}
+      }
+    }
+
+    // ── Step 3: If still no IC number, try preprocessing (strike-through fix) ─
+    if (!rawText.match(/\d{6}\s*-\s*\d{2}\s*-\s*\d{4}/)) {
+      preprocessedPath = await preprocessImage(tmpPath, tmpDir);
+      if (preprocessedPath !== tmpPath && fs.existsSync(preprocessedPath)) {
+        const prepText = (await execTesseract(
+          process.env.TESSERACT_PATH || 'tesseract',
+          [preprocessedPath, outBase + '_prep', '--oem', '1', '--psm', '6', '-l', 'mal+eng', 'txt'],
+          tmpDir,
+        )).trim();
+        if (prepText.length > rawText.length) {
+          rawText = prepText;
+          try { fs.unlinkSync(outBase + '_prep.txt'); } catch {}
+        }
+      }
+    }
 
     if (!rawText || rawText.length < 10) {
       return { success: false, error: 'OCR returned empty text. Please try a clearer photo.' };
@@ -427,7 +481,7 @@ export async function extractMyKad(imageBuffer: Buffer): Promise<ExtractionResul
     }
     return { success: false, error: 'OCR processing failed: ' + msg };
   } finally {
-    cleanup([tmpPath]);
+    cleanup([tmpPath, preprocessedPath].filter(Boolean) as string[]);
     try { fs.unlinkSync(outBase + '.txt'); } catch {}
   }
 }
