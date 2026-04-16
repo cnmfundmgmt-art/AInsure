@@ -1,0 +1,919 @@
+'use client';
+
+import { useState, useRef, useCallback, useEffect } from 'react';
+import Link from 'next/link';
+import {
+ Shield, Send, Loader2, Camera, XCircle, RefreshCw, Upload,
+ ChevronDown, ChevronRight, Search, AlertTriangle, Clock, DollarSign,
+ Heart, ShieldCheck, MessageSquare, Package, Users, History, Calendar,
+ TrendingUp, BarChart3, ChevronUp, PlusCircle, ArrowRight, ChevronLeft,
+ Menu, X, User, Star, CheckCircle, AlertCircle, Info
+} from 'lucide-react';
+import { toast } from 'sonner';
+import { useDropzone } from 'react-dropzone';
+
+const API = process.env.NEXT_PUBLIC_API_URL || '';
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+type Message = {
+ id: string; role: 'user' | 'assistant'; type: string;
+ [key: string]: unknown;
+};
+
+type Product = {
+ id: string; productName: string; provider: string; policyType: string;
+ monthlyPremium: number; annualPremium: number; lifeCover10y: number;
+ lifeCover20y: number; lifeCover30y: number; ciCover: number;
+ medicalCover: number; isTakaful: boolean;
+ guaranteedCash10y: number; guaranteedCash20y: number; guaranteedCash30y: number;
+ projectedCash10y: number; projectedCash20y: number; projectedCash30y: number;
+ paymentTermYears: number; coverageFeatures: string[]; productSummary: string;
+};
+
+type AnalysisResult = {
+ sessionId: string; client: Record<string, unknown>; gapAnalysis: Record<string, Record<string, number>>;
+ recommendedProducts: Array<{ rank: number; product: Product; advisorNote: string }>;
+ pitchScript: string; painPoints: Array<Record<string, unknown>>; notes: string[];
+ cashValueChart: Record<string, unknown> | null;
+};
+
+type SessionSummary = {
+ id: string; clientName: string; clientIC: string; annualIncome: number;
+ monthlyBudget: number; createdAt: number; date: string;
+};
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function fmt(n?: number | null) {
+ if (n == null || isNaN(n as number)) return 'N/A';
+ return 'RM' + (n as number).toLocaleString('en-MY', { maximumFractionDigits: 0 });
+}
+
+function nanoid() {
+ return Math.random().toString(36).slice(2, 10);
+}
+
+function parseDOBFromIC(icNumber: string): { dob: string; age: number } | null {
+ if (!icNumber || icNumber.length < 6) return null;
+ const yy = parseInt(icNumber.substring(0, 2));
+ const mm = parseInt(icNumber.substring(2, 4));
+ const dd = parseInt(icNumber.substring(4, 6));
+ if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
+ const cur = new Date().getFullYear() - 2000;
+ const year = yy <= cur ? 2000 + yy : 1900 + yy;
+ const dob = `${year}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
+ const today = new Date();
+ let age = today.getFullYear() - year;
+ const m = today.getMonth() - (mm - 1);
+ if (m < 0 || (m === 0 && today.getDate() < dd)) age--;
+ return { dob, age: Math.max(0, age) };
+}
+
+const SUGGESTIONS = [
+ 'Show gap analysis', 'Compare Great Eastern vs AIA', 'Generate pitch script',
+ 'What if budget is RM300?', 'Surrender value schedule',
+ 'Objection handlers for budget', 'Explain co-insurance', 'Waiting period for CI',
+ 'Covered illnesses (dengue, cancer)', 'Premium holiday explained',
+ 'Breakeven year', 'Can expat buy this?',
+];
+
+// ─── ICScanUpload ─────────────────────────────────────────────────────────────
+
+type OcrPhase = 'idle' | 'downloading' | 'extracting' | 'done' | 'error';
+
+function ICScanUpload({ onExtracted }: { onExtracted: (data: { name: string; icNumber: string; dob: string; age: number; gender: string; nationality: string }) => void }) {
+ const [phase, setPhase] = useState<OcrPhase>('idle');
+ const [progressMsg, setProgressMsg] = useState('');
+ const [preview, setPreview] = useState<string | null>(null);
+ const [dragActive, setDragActive] = useState(false);
+ const [error, setError] = useState('');
+ const [confidence, setConfidence] = useState<number | null>(null);
+
+ const handleFile = useCallback(async (file: File) => {
+ if (!file.type.startsWith('image/')) { setError('Please upload an image (JPG, PNG, WebP)'); return; }
+ if (file.size > 10 * 1024 * 1024) { setError('File size must be under 10MB'); return; }
+ setError(''); setPreview(URL.createObjectURL(file)); setPhase('downloading'); setProgressMsg('Starting OCR engine…');
+ try {
+ const fd = new FormData();
+ fd.append('file', file); fd.append('id_type', 'mykad');
+ const res = await fetch(`${API}/api/verification/ocr?stream=1`, { method: 'POST', body: fd });
+ if (!res.ok) throw new Error(await res.text());
+ const reader = res.body?.getReader();
+ const decoder = new TextDecoder();
+ let buffer = '';
+ if (!reader) throw new Error('No response stream');
+ while (true) {
+ const { done, value } = await reader.read();
+ if (done) break;
+ buffer += decoder.decode(value, { stream: true });
+ const lines = buffer.split('\n'); buffer = lines.pop() || '';
+ for (const line of lines) {
+ if (!line.startsWith('event: ')) continue;
+ const evt = line.slice(7).trim();
+ const di = lines.indexOf(line) + 1;
+ if (di >= lines.length || !lines[di].startsWith('data: ')) continue;
+ const payload = JSON.parse(lines[di].slice(6));
+ if (evt === 'phase' && payload.phase === 'initialising') {
+ setPhase('downloading'); setProgressMsg(payload.message || 'Setting up…');
+ } else if (evt === 'done') {
+ const d = payload.data as Record<string, unknown>;
+ const rawIC = (d.icNumber as string) || (d.ic_number as string) || '';
+ const icNumber = rawIC.replace(/\s/g, '');
+ const dobAge = parseDOBFromIC(icNumber);
+ setConfidence((d.confidence as number) ?? null);
+ setPhase('done');
+ onExtracted({
+ name: (d.fullName as string) || (d.nameClean as string) || '',
+ icNumber,
+ dob: dobAge?.dob || '',
+ age: dobAge?.age || 0,
+ gender: (d.gender as string) || '',
+ nationality: 'Malaysian',
+ });
+ toast.success('IC scanned successfully!');
+ return;
+ } else if (evt === 'error') {
+ throw new Error(payload.error || 'Extraction failed');
+ }
+ }
+ }
+ throw new Error('OCR stream ended unexpectedly');
+ } catch (err) {
+ setPhase('error'); setError((err as Error).message); toast.error((err as Error).message);
+ }
+ }, [onExtracted, API]);
+
+ const onDrop = useCallback((accepted: File[]) => { if (accepted[0]) handleFile(accepted[0]); }, [handleFile]);
+ const { getRootProps, getInputProps, isDragActive } = useDropzone({
+ id: 'ic-scan-insurance-v2', onDrop,
+ accept: { 'image/jpeg': ['.jpg', '.jpeg'], 'image/png': ['.png'], 'image/webp': ['.webp'] },
+ maxFiles: 1, maxSize: 10 * 1024 * 1024,
+ });
+
+ return (
+ <div className="space-y-2">
+ <div
+ {...getRootProps()}
+ className={`border-2 border-dashed rounded-xl p-4 text-center cursor-pointer transition-all ${
+ isDragActive || dragActive ? 'border-indigo-500 bg-indigo-50' :
+ preview && phase === 'done' ? 'border-green-400 bg-green-50' :
+ 'border-indigo-300 hover:border-indigo-500 hover:bg-indigo-50/50'
+ } ${phase === 'downloading' || phase === 'extracting' ? 'cursor-not-allowed opacity-70' : ''}`}
+ onDragEnter={() => setDragActive(true)} onDragLeave={() => setDragActive(false)}
+ >
+ <input {...getInputProps()} />
+ {preview ? (
+ <div className="space-y-1">
+ <img src={preview} alt="IC" className="max-h-28 mx-auto rounded-lg object-contain border border-gray-200 shadow-sm" />
+ {phase === 'done' && <p className="text-xs text-green-600 font-medium">✓ Scan complete{confidence != null ? ` — ${(confidence * 100).toFixed(0)}% confidence` : ''}</p>}
+ <button type="button" onClick={(e) => { e.stopPropagation(); setPhase('idle'); setError(''); setPreview(null); setConfidence(null); }}
+ className="text-xs text-gray-500 hover:text-red-500 transition">Remove & re-upload</button>
+ </div>
+ ) : (
+ <div className="flex flex-col items-center gap-1 py-1">
+ <Camera className="w-5 h-5 text-indigo-500" />
+ <p className="text-xs font-medium text-gray-600">{isDragActive ? 'Drop IC here' : 'Click or drag MyKad'}</p>
+ <p className="text-xs text-gray-400">JPG, PNG, WebP — max 10MB</p>
+ </div>
+ )}
+ </div>
+ {phase === 'downloading' && (
+ <div className="flex items-center gap-2 bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-2 text-indigo-700 text-xs">
+ <Loader2 className="w-3.5 h-3.5 animate-spin flex-shrink-0" />
+ <span>{progressMsg || 'Downloading OCR models…'}</span>
+ </div>
+ )}
+ {phase === 'error' && (
+ <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-red-700 text-xs">
+ <XCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+ <div>
+ <p className="font-medium">Extraction failed</p>
+ <p className="text-red-400">{error}</p>
+ <button onClick={() => { setPhase('idle'); setError(''); }}
+ className="mt-1 flex items-center gap-1 text-amber-700 border border-amber-300 rounded px-2 py-0.5 hover:bg-amber-50 transition bg-amber-50">
+ <RefreshCw className="w-3 h-3" /> Try Again
+ </button>
+ </div>
+ </div>
+ )}
+ </div>
+ );
+}
+
+// ─── Message Renderers ────────────────────────────────────────────────────────
+
+function renderTable(headers: string[], rows: string[][]) {
+ return (
+ <div className="overflow-x-auto rounded-lg border border-gray-200">
+ <table className="w-full text-xs">
+ <thead><tr className="bg-gray-50 border-b border-gray-200">
+ {headers.map((h, i) => <th key={i} className="text-left px-3 py-2 font-semibold text-gray-700 whitespace-nowrap">{h}</th>)}
+ </tr></thead>
+ <tbody>
+ {rows.map((row, i) => (
+ <tr key={i} className={`border-b border-gray-100 ${i % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'}`}>
+ {row.map((cell, j) => <td key={j} className="px-3 py-1.5 text-gray-700 whitespace-nowrap">{cell}</td>)}
+ </tr>
+ ))}
+ </tbody>
+ </table>
+ </div>
+ );
+}
+
+function renderGapBar(label: string, required: number, gap: number, color = 'bg-indigo-500') {
+ const pct = required > 0 ? Math.min((gap / required) * 100, 100) : 100;
+ return (
+ <div className="space-y-1">
+ <div className="flex justify-between text-xs"><span className="font-medium text-gray-700">{label}</span><span className="text-gray-500">Gap: {fmt(gap)}</span></div>
+ <div className="h-2 bg-gray-100 rounded-full overflow-hidden"><div className={`h-full ${color} rounded-full`} style={{ width: `${pct}%` }} /></div>
+ <p className="text-xs text-gray-400">Required: {fmt(required)}</p>
+ </div>
+ );
+}
+
+function renderProducts(products: Array<{ rank: number; product: Product; advisorNote?: string }>) {
+ return (
+ <div className="space-y-2">
+ {products.map(({ rank, product, advisorNote }) => (
+ <div key={product.id} className={`border rounded-xl p-3 ${rank === 1 ? 'border-indigo-300 bg-indigo-50/40' : 'border-gray-200 bg-white'}`}>
+ {rank === 1 && <span className="inline-block text-xs font-bold text-indigo-600 mb-1">#1 BEST MATCH</span>}
+ <div className="flex items-start justify-between gap-2">
+ <div>
+ <p className="text-sm font-semibold text-gray-900">{product.productName}</p>
+ <p className="text-xs text-gray-500">{product.provider} · {product.policyType}{product.isTakaful ? ' · Takaful' : ''}</p>
+ {advisorNote && <p className="text-xs text-gray-600 mt-1 italic">{advisorNote}</p>}
+ </div>
+ <div className="text-right flex-shrink-0">
+ <p className="text-sm font-bold text-indigo-600">{fmt(product.monthlyPremium)}<span className="text-xs font-normal text-gray-400">/mo</span></p>
+ <p className="text-xs text-gray-400">Life: {fmt(product.lifeCover10y)}</p>
+ <p className="text-xs text-gray-400">CI: {fmt(product.ciCover)}</p>
+ </div>
+ </div>
+ {product.coverageFeatures.length > 0 && (
+ <div className="flex flex-wrap gap-1 mt-2">
+ {product.coverageFeatures.slice(0, 3).map((f, i) => <span key={i} className="text-xs bg-gray-100 text-gray-600 rounded px-1.5 py-0.5">{f}</span>)}
+ </div>
+ )}
+ </div>
+ ))}
+ </div>
+ );
+}
+
+function renderPitchScript(script: string) {
+ const lines = script.split('\n');
+ return (
+ <div className="space-y-1 text-sm text-gray-700">
+ {lines.map((line, i) => {
+ if (line.startsWith('## ')) return <h3 key={i} className="font-bold text-indigo-700 mt-3 mb-1">{line.slice(3)}</h3>;
+ if (line.startsWith('### ')) return <h4 key={i} className="font-semibold text-gray-800 mt-2">{line.slice(4)}</h4>;
+ if (line.startsWith('- ')) return <p key={i} className="flex gap-2 pl-2"><span className="text-indigo-400">•</span><span>{line.slice(2)}</span></p>;
+ if (line.startsWith('| ')) return <p key={i} className="text-xs text-gray-500 pl-4">{line}</p>;
+ if (line.startsWith('> ')) return <blockquote key={i} className="border-l-4 border-indigo-300 pl-3 italic text-gray-600">{line.slice(2)}</blockquote>;
+ if (line.trim() === '---') return <hr key={i} className="border-gray-200 my-2" />;
+ if (line.trim() === '') return <div key={i} className="h-1" />;
+ return <p key={i}>{line}</p>;
+ })}
+ </div>
+ );
+}
+
+function renderIllustrationChart(chartData: { labels: string[]; guaranteed: number[]; projected: number[]; cumulative: number[] }) {
+ const maxVal = Math.max(...chartData.guaranteed, ...chartData.projected, ...chartData.cumulative);
+ return (
+ <div className="space-y-1">
+ <div className="flex items-center gap-4 text-xs mb-2">
+ <span className="flex items-center gap-1"><span className="w-3 h-2 bg-indigo-500 rounded inline-block"></span>Guaranteed</span>
+ <span className="flex items-center gap-1"><span className="w-3 h-2 bg-green-500 rounded inline-block"></span>Projected</span>
+ <span className="flex items-center gap-1"><span className="w-3 h-2 bg-gray-400 rounded inline-block"></span>Cumulative Premium</span>
+ </div>
+ <div className="flex items-end gap-1 h-32">
+ {chartData.labels.map((label, i) => {
+ const gH = (chartData.guaranteed[i] / maxVal) * 100;
+ const pH = (chartData.projected[i] / maxVal) * 100;
+ const cH = (chartData.cumulative[i] / maxVal) * 100;
+ return (
+ <div key={i} className="flex-1 flex flex-col items-center gap-0.5">
+ <div className="w-full flex flex-col-reverse gap-px" style={{ height: '80px' }}>
+ <div className="bg-indigo-500 rounded-t w-full" style={{ height: `${gH}%`, minHeight: '2px' }} />
+ <div className="bg-green-500 rounded-t w-full" style={{ height: `${pH}%`, minHeight: '2px' }} />
+ <div className="bg-gray-300 rounded w-full" style={{ height: `${cH}%`, minHeight: '2px' }} />
+ </div>
+ <span className="text-xs text-gray-500 transform -rotate-45 origin-top-left whitespace-nowrap">{label}</span>
+ </div>
+ );
+ })}
+ </div>
+ </div>
+ );
+}
+
+function renderCard(title: string, icon: React.ReactNode, content: React.ReactNode) {
+ return (
+ <div className="border border-gray-200 rounded-xl p-4 bg-white">
+ <div className="flex items-center gap-2 mb-3">
+ <div className="w-7 h-7 bg-indigo-50 rounded-lg flex items-center justify-center">{icon}</div>
+ <h3 className="font-semibold text-gray-800 text-sm">{title}</h3>
+ </div>
+ {content}
+ </div>
+ );
+}
+
+// ─── Assistant Message ────────────────────────────────────────────────────────
+
+function AssistantMessage({ msg }: { msg: Message }) {
+ switch (msg.type) {
+ case 'welcome': return (
+ <div className="space-y-4">
+ <div className="bg-gradient-to-br from-indigo-50 to-white border border-indigo-200 rounded-xl p-5">
+ <div className="flex items-center gap-2 mb-3">
+ <Shield className="w-5 h-5 text-indigo-600" />
+ <h2 className="font-bold text-indigo-700">AI Insurance Strategist</h2>
+ </div>
+ <p className="text-sm text-gray-600 mb-3">👋 Hi! I'm your AI Insurance Strategist. I can help you:</p>
+ <ul className="text-sm text-gray-600 space-y-1 mb-4">
+ <li>• Compare insurance products and providers</li>
+ <li>• Adjust recommendations to fit any budget</li>
+ <li>• Generate pitch scripts and objection handlers</li>
+ <li>• Answer questions about coverage, waiting periods, surrender values, and more</li>
+ </ul>
+ <p className="text-xs text-indigo-500">Upload an IC or enter client details on the left → Click "Start Analysis" to begin!</p>
+ </div>
+ {msg.suggestions && (
+ <div className="flex flex-wrap gap-2">
+ {(msg.suggestions as string[]).map((s) => (
+ <button key={s} onClick={() => window.dispatchEvent(new CustomEvent('suggestion', { detail: s }))}
+ className="text-xs border border-indigo-200 text-indigo-700 rounded-full px-3 py-1 hover:bg-indigo-50 transition">{s}</button>
+ ))}
+ </div>
+ )}
+ </div>
+ );
+ case 'analysis_intro': return (
+ <div className="space-y-4">
+ <div className="bg-green-50 border border-green-200 rounded-xl p-4">
+ <div className="flex items-center gap-2 mb-2">
+ <CheckCircle className="w-4 h-4 text-green-600" />
+ <p className="font-semibold text-green-800 text-sm">Analysis Complete!</p>
+ </div>
+ {msg.client && (
+ <div className="grid grid-cols-4 gap-2 text-xs mb-3">
+ {[
+ { label: 'Name', val: (msg.client as Record<string, unknown>).name as string },
+ { label: 'Age', val: String((msg.client as Record<string, unknown>).age as number) },
+ { label: 'Income', val: fmt((msg.client as Record<string, unknown>).income as number) + '/yr' },
+ { label: 'Budget', val: fmt((msg.client as Record<string, unknown>).monthlyBudget as number) + '/mo' },
+ ].map(({ label, val }) => (
+ <div key={label} className="bg-white rounded-lg px-2 py-1.5 text-center"><p className="text-gray-500">{label}</p><p className="font-semibold text-gray-800">{val}</p></div>
+ ))}
+ </div>
+ )}
+ </div>
+ {msg.gapAnalysis && (
+ <div className="border border-gray-200 rounded-xl p-4 bg-gray-50 space-y-3">
+ <p className="text-sm font-semibold text-gray-700">Protection Gap Analysis</p>
+ {renderGapBar('Life Protection', ((msg.gapAnalysis as Record<string, Record<string, number>>)?.life?.required) || 0, ((msg.gapAnalysis as Record<string, Record<string, number>>)?.life?.gap) || 0)}
+ {renderGapBar('Critical Illness', ((msg.gapAnalysis as Record<string, Record<string, number>>)?.ci?.required) || 0, ((msg.gapAnalysis as Record<string, Record<string, number>>)?.ci?.gap) || 0, 'bg-rose-500')}
+ {renderGapBar('Medical / Hospital', ((msg.gapAnalysis as Record<string, Record<string, number>>)?.medical?.required) || 0, ((msg.gapAnalysis as Record<string, Record<string, number>>)?.medical?.gap) || 0, 'bg-amber-500')}
+ </div>
+ )}
+ {msg.products && renderProducts(msg.products as Array<{ rank: number; product: Product; advisorNote?: string }>)}
+ {msg.notes && (msg.notes as string[]).map((note, i) => (
+ <div key={i} className="flex items-start gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+ <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />{note}
+ </div>
+ ))}
+ <p className="text-xs text-gray-400 italic">Session saved. Ask follow-up questions below or browse products in the sidebar!</p>
+ </div>
+ );
+ case 'comparison': return (
+ <div className="space-y-3">
+ {msg.message && <p className="text-sm text-gray-700">{msg.message}</p>}
+ {msg.table && renderTable(msg.table.headers as string[], msg.table.rows as string[][])}
+ {msg.providers?.length === 0 && <p className="text-sm text-gray-500">No products found for the specified providers.</p>}
+ </div>
+ );
+ case 'budget': return (
+ <div className="space-y-3">
+ <p className="text-sm text-gray-700 whitespace-pre-line">{msg.message}</p>
+ {msg.products && renderProducts(msg.products as Array<{ rank: number; product: Product; advisorNote?: string }>)}
+ {msg.newGap && (
+ <div className="border border-gray-200 rounded-xl p-4 bg-gray-50 space-y-3">
+ <p className="text-sm font-semibold text-gray-700">Updated Gap Analysis</p>
+ {renderGapBar('Life', ((msg.newGap as Record<string, Record<string, number>>)?.life?.required) || 0, ((msg.newGap as Record<string, Record<string, number>>)?.life?.gap) || 0)}
+ {renderGapBar('CI', ((msg.newGap as Record<string, Record<string, number>>)?.ci?.required) || 0, ((msg.newGap as Record<string, Record<string, number>>)?.ci?.gap) || 0, 'bg-rose-500')}
+ {renderGapBar('Medical', ((msg.newGap as Record<string, Record<string, number>>)?.medical?.required) || 0, ((msg.newGap as Record<string, Record<string, number>>)?.medical?.gap) || 0, 'bg-amber-500')}
+ </div>
+ )}
+ </div>
+ );
+ case 'gap_analysis': return (
+ <div className="space-y-3">
+ <p className="text-sm text-gray-700">{msg.message}</p>
+ {msg.gap && (
+ <div className="space-y-3">
+ {renderGapBar('Life Protection (10x income)', ((msg.gap as Record<string, Record<string, number>>)?.life?.required) || 0, ((msg.gap as Record<string, Record<string, number>>)?.life?.gap) || 0)}
+ {renderGapBar('Critical Illness (3x income)', ((msg.gap as Record<string, Record<string, number>>)?.ci?.required) || 0, ((msg.gap as Record<string, Record<string, number>>)?.ci?.gap) || 0, 'bg-rose-500')}
+ {renderGapBar('Medical / Hospital (RM1M)', ((msg.gap as Record<string, Record<string, number>>)?.medical?.required) || 0, ((msg.gap as Record<string, Record<string, number>>)?.medical?.gap) || 0, 'bg-amber-500')}
+ </div>
+ )}
+ </div>
+ );
+ case 'pitch_script': return <div>{renderPitchScript(msg.script as string)}</div>;
+ case 'surrender_value': return (
+ <div className="space-y-3">
+ {msg.message && <p className="text-sm text-gray-700">{msg.message}</p>}
+ {msg.schedule && renderTable(['Year', 'Cumulative Premium', 'Guaranteed', 'Projected'],
+ (msg.schedule as Array<{ year: number; cumulative: number; guaranteed: number; projected: number }>).map(s =>
+ [String(s.year), fmt(s.cumulative), fmt(s.guaranteed), fmt(s.projected)]
+ ))}
+ </div>
+ );
+ case 'illustration': return (
+ <div className="space-y-3">
+ {msg.message && <p className="text-sm text-gray-700">{msg.message}</p>}
+ {msg.chartData && renderIllustrationChart(msg.chartData as { labels: string[]; guaranteed: number[]; projected: number[]; cumulative: number[] })}
+ {msg.breakeven && <p className="text-xs bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-2 text-indigo-700">🎯 Guaranteed breakeven at approximately <strong>Year {msg.breakeven}</strong></p>}
+ </div>
+ );
+ case 'pain_points': return (
+ <div className="space-y-3">
+ <p className="text-xs text-gray-500 italic">{(msg as Record<string, unknown>).sessionBased ? 'Based on client session data' : 'General emotional pain points for Malaysian families'}</p>
+ {((msg.painPoints as Array<{ id: string; title: string; description: string; financialImpact: string; urgency: string }>) || []).map((pp) => (
+ <div key={pp.id} className={`border rounded-xl p-3 ${pp.urgency === 'high' ? 'border-rose-200 bg-rose-50/50' : 'border-amber-200 bg-amber-50/50'}`}>
+ <div className="flex items-start gap-2">
+ <AlertCircle className={`w-4 h-4 flex-shrink-0 mt-0.5 ${pp.urgency === 'high' ? 'text-rose-500' : 'text-amber-500'}`} />
+ <div>
+ <p className="text-sm font-semibold text-gray-800 italic">{pp.title}</p>
+ <p className="text-xs text-gray-600 mt-1">{pp.description}</p>
+ <p className="text-xs font-medium text-rose-600 mt-1">{pp.financialImpact}</p>
+ </div>
+ </div>
+ </div>
+ ))}
+ </div>
+ );
+ case 'objection_handlers': return (
+ <div className="space-y-3">
+ {((msg.handlers as Array<{ objection: string; response: string; urgency: string }>) || []).map((h, i) => (
+ <div key={i} className="border border-gray-200 rounded-xl p-3 bg-white">
+ <div className="flex items-start gap-2 mb-2">
+ <span className={`text-xs font-bold px-1.5 py-0.5 rounded flex-shrink-0 ${h.urgency === 'high' ? 'bg-rose-100 text-rose-700' : h.urgency === 'medium' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-600'}`}>{h.urgency.toUpperCase()}</span>
+ <p className="text-sm font-semibold text-gray-800">{h.objection}</p>
+ </div>
+ <p className="text-xs text-gray-600 italic pl-4 border-l-2 border-indigo-200">{h.response}</p>
+ </div>
+ ))}
+ </div>
+ );
+ case 'underwriting': return renderCard('Medical Underwriting Guidelines', <Heart className="w-4 h-4 text-indigo-600" />,
+ <div className="text-sm text-gray-600 space-y-2"><p className="whitespace-pre-line">{msg.guidelines}</p></div>);
+ case 'lapse_reinstatement': return renderCard('Policy Lapse & Reinstatement', <AlertTriangle className="w-4 h-4 text-amber-600" />,
+ <div className="space-y-2"><p className="text-sm text-gray-600 whitespace-pre-line">{msg.description}</p>
+ {msg.key_terms && <ul className="space-y-1">{((msg.key_terms as string[]) || []).map((t, i) => <li key={i} className="text-xs text-gray-600 flex gap-2"><span className="text-amber-400">•</span>{t}</li>)}</ul>}</div>);
+ case 'waiting_period': return renderCard('Waiting Periods', <Clock className="w-4 h-4 text-blue-600" />,
+ <div className="space-y-2">
+ <div className="grid grid-cols-2 gap-2">
+ <div className="bg-blue-50 rounded-lg p-2 text-center"><p className="text-xs text-blue-500 font-medium">CI</p><p className="text-sm font-bold text-blue-700">{msg.ci_waiting_days} days</p></div>
+ <div className="bg-blue-50 rounded-lg p-2 text-center"><p className="text-xs text-blue-500 font-medium">Medical</p><p className="text-sm font-bold text-blue-700">{msg.medical_waiting_days} days</p></div>
+ </div>
+ {msg.notes && <ul className="space-y-1">{((msg.notes as string[]) || []).map((n, i) => <li key={i} className="text-xs text-gray-600 flex gap-2"><span className="text-blue-400">•</span><span className="whitespace-pre-line">{n}</span></li>)}</ul>}
+ </div>);
+ case 'covered_illness': return renderCard('Covered Illnesses & Claims', <Heart className="w-4 h-4 text-rose-600" />,
+ <div className="space-y-3">
+ <div className="text-sm text-gray-600 space-y-1">{((msg.common_ci_list as string[]) || []).map((c, i) => <p key={i}>{c}</p>)}</div>
+ {msg.claim_process && <div className="border-t border-gray-100 pt-2"><p className="text-xs font-semibold text-gray-700 mb-1">Claim Process:</p><p className="text-xs text-gray-600 whitespace-pre-line">{msg.claim_process}</p></div>}
+ </div>);
+ case 'premium_holiday': return renderCard('Premium Holiday', <DollarSign className="w-4 h-4 text-green-600" />,
+ <div className="space-y-2">
+ <div className="flex items-center gap-2">
+ <span className={`text-xs font-bold px-2 py-0.5 rounded ${(msg.available as boolean) ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{(msg.available as boolean) ? '✓ Available' : '✗ Not Available'}</span>
+ {msg.max_years && <span className="text-xs text-gray-500">Up to {msg.max_years} months</span>}
+ </div>
+ {msg.conditions && <ul className="space-y-1">{((msg.conditions as string[]) || []).map((c, i) => <li key={i} className="text-xs text-gray-600 flex gap-2"><span className="text-green-400">•</span>{c}</li>)}</ul>}
+ </div>);
+ case 'breakeven': return renderCard('Breakeven Analysis', <TrendingUp className="w-4 h-4 text-indigo-600" />,
+ <div className="space-y-2">
+ {msg.year && <div className="text-center py-3 bg-indigo-50 rounded-xl"><p className="text-xs text-indigo-500 font-medium">Guaranteed Breakeven</p><p className="text-2xl font-bold text-indigo-700">Year {msg.year}</p></div>}
+ <p className="text-sm text-gray-600 whitespace-pre-line">{msg.explanation}</p>
+ </div>);
+ case 'expat_eligibility': return renderCard('Expat / Foreign National Eligibility', <Users className="w-4 h-4 text-blue-600" />,
+ <div className="space-y-2">
+ <div className="flex items-center gap-2">
+ <span className={`text-xs font-bold px-2 py-0.5 rounded ${(msg.eligible as boolean) ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>{(msg.eligible as boolean) ? '✓ May be Eligible' : '⚠ Limited Eligibility'}</span>
+ {msg.max_coverage_age && <span className="text-xs text-gray-500">Coverage up to age {msg.max_coverage_age}</span>}
+ </div>
+ {msg.conditions && <ul className="space-y-1">{((msg.conditions as string[]) || []).map((c, i) => <li key={i} className="text-xs text-gray-600 flex gap-2"><span className="text-blue-400">•</span>{c}</li>)}</ul>}
+ </div>);
+ case 'coverage_age': return renderCard('Coverage Age & Policy Term', <ShieldCheck className="w-4 h-4 text-indigo-600" />,
+ <div className="space-y-2">
+ <div className="grid grid-cols-3 gap-2">
+ {[{ label: 'Entry Age', val: `${msg.entry_age}–${msg.expiry_age}` }, { label: 'Max Coverage', val: `Age ${msg.max_age}` }, { label: 'Policy Term', val: `${msg.policy_term_years} yrs` }].map(({ label, val }) => (
+ <div key={label} className="bg-indigo-50 rounded-lg p-2 text-center"><p className="text-xs text-indigo-400 font-medium">{label}</p><p className="text-sm font-bold text-indigo-700">{val}</p></div>
+ ))}
+ </div>
+ {msg.notes && <ul className="space-y-1">{((msg.notes as string[]) || []).map((n, i) => <li key={i} className="text-xs text-gray-600 flex gap-2"><span className="text-indigo-300">•</span><span className="whitespace-pre-line">{n}</span></li>)}</ul>}
+ </div>);
+ case 'coinsurance': return renderCard('Co-insurance & Deductible', <BarChart3 className="w-4 h-4 text-blue-600" />,
+ <div className="space-y-3">
+ <div className="grid grid-cols-2 gap-2">
+ <div className="bg-blue-50 rounded-lg p-2 text-center"><p className="text-xs text-blue-500 font-medium">Co-insurance</p><p className="text-lg font-bold text-blue-700">{msg.coinsurance_pct}%</p></div>
+ <div className="bg-blue-50 rounded-lg p-2 text-center"><p className="text-xs text-blue-500 font-medium">Deductible</p><p className="text-lg font-bold text-blue-700">{fmt(msg.deductible_rm as number)}</p></div>
+ </div>
+ <p className="text-sm text-gray-600 whitespace-pre-line">{msg.explanation}</p>
+ {msg.notes && <ul className="space-y-1">{((msg.notes as string[]) || []).map((n, i) => <li key={i} className="text-xs text-gray-500 flex gap-2"><span className="text-blue-300">•</span>{n}</li>)}</ul>}
+ </div>);
+ case 'guaranteed_vs_projected': return renderCard('Guaranteed vs Projected Values', <TrendingUp className="w-4 h-4 text-indigo-600" />,
+ <div className="space-y-3 text-sm">
+ <p className="text-gray-600">{msg.explanation}</p>
+ <div className="bg-indigo-50 rounded-lg p-3"><p className="text-xs font-bold text-indigo-700 mb-1">GUARANTEED</p><p className="text-xs text-gray-600 whitespace-pre-line">{msg.guaranteed_meaning}</p></div>
+ <div className="bg-green-50 rounded-lg p-3"><p className="text-xs font-bold text-green-700 mb-1">PROJECTED (Non-Guaranteed)</p><p className="text-xs text-gray-600 whitespace-pre-line">{msg.projected_meaning}</p></div>
+ <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2"><p className="text-xs text-amber-700 whitespace-pre-line">{msg.disclaimer}</p></div>
+ </div>);
+ case 'product_detail': return (
+ <div className="space-y-3">
+ <p className="text-sm text-gray-700">{msg.message}</p>
+ {msg.products?.length > 0 && renderProducts(msg.products as Array<{ rank: number; product: Product; advisorNote?: string }>)}
+ </div>
+ );
+ case 'general': return (
+ <div className="space-y-3">
+ {msg.response && <p className="text-sm text-gray-700 whitespace-pre-line">{msg.response}</p>}
+ {msg.suggestions && (
+ <div className="flex flex-wrap gap-2">
+ {((msg.suggestions as string[]) || []).map((s) => (
+ <button key={s} onClick={() => window.dispatchEvent(new CustomEvent('suggestion', { detail: s }))}
+ className="text-xs border border-indigo-200 text-indigo-700 rounded-full px-3 py-1 hover:bg-indigo-50 transition">{s}</button>
+ ))}
+ </div>
+ )}
+ </div>
+ );
+ default: return (
+ <div className="space-y-2">
+ {msg.content && <p className="text-sm text-gray-700 whitespace-pre-line">{msg.content as string}</p>}
+ <p className="text-xs text-gray-400 italic">Response type: {msg.type}</p>
+ </div>
+ );
+ }
+}
+
+// ─── Product Detail Panel ────────────────────────────────────────────────────
+
+function ProductDetailPanel({ productId, onClose }: { productId: string; onClose: () => void }) {
+ const [product, setProduct] = useState<Record<string, unknown> | null>(null);
+ const [loading, setLoading] = useState(true);
+
+ useEffect(() => { if (!productId) return; setLoading(true);
+ fetch(`${API}/api/insurance/products/${productId}`).then(r => r.json()).then(d => { setProduct(d.product); setLoading(false); }).catch(() => setLoading(false));
+ }, [productId]);
+
+ if (loading) return <div className="flex items-center justify-center h-32"><Loader2 className="w-5 h-5 animate-spin text-gray-400" /></div>;
+ if (!product) return <div className="text-center text-sm text-gray-500 py-8">Product not found</div>;
+
+ const p = product;
+ const features = (p.coverageFeatures as string[]) || [];
+ const keyBenefits = (p.keyBenefits as string[]) || ['Life protection', 'CI rider available', 'Medical rider', 'Cash value'];
+ const keyExclusions = (p.keyExclusions as string[]) || ['Pre-existing conditions', 'Self-inflicted injuries', 'War/invasion'];
+
+ return (
+ <div className="space-y-4 overflow-y-auto max-h-full">
+ <div className="flex items-start justify-between gap-2">
+ <div>
+ <h2 className="text-sm font-bold text-gray-900">{(p.productName as string)}</h2>
+ <p className="text-xs text-gray-500">{(p.provider as string)} · {(p.policyType as string)}</p>
+ <div className="flex gap-1 mt-1">
+ {(p.isTakaful as boolean) && <span className="text-xs bg-green-100 text-green-700 rounded px-1.5 py-0.5 font-medium">Takaful</span>}
+ <span className="text-xs bg-gray-100 text-gray-600 rounded px-1.5 py-0.5">{(p.policyType as string)}</span>
+ </div>
+ </div>
+ <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="w-4 h-4" /></button>
+ </div>
+ <div className="grid grid-cols-2 gap-2">
+ {[{ label: 'Monthly', val: fmt(p.monthlyPremiumMin as number) }, { label: 'Annual', val: fmt(p.annualPremium as number) }].map(({ label, val }) => (
+ <div key={label} className="bg-indigo-50 rounded-xl p-3 text-center"><p className="text-xs text-indigo-500 font-medium">{label}</p><p className="text-lg font-bold text-indigo-700">{val}</p></div>
+ ))}
+ </div>
+ <div>
+ <p className="text-xs font-semibold text-gray-700 mb-2">Coverage</p>
+ <div className="grid grid-cols-3 gap-2">
+ {[{ label: 'Life (10yr)', val: fmt(p.lifeCover10y as number) }, { label: 'CI Cover', val: fmt(p.ciCover as number) }, { label: 'Medical', val: fmt(p.medicalCover as number) }].map(({ label, val }) => (
+ <div key={label} className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-xs text-gray-500">{label}</p><p className="text-sm font-bold text-gray-800">{val}</p></div>
+ ))}
+ </div>
+ </div>
+ <div className="grid grid-cols-2 gap-2 text-xs">
+ {[
+ { label: 'Entry Age', val: `${p.minEntryAge}–${p.maxEntryAge}` },
+ { label: 'Coverage Until', val: `Age ${p.maxCoverageAge || 70}` },
+ { label: 'Payment Term', val: `${p.paymentTermYears || 0} years` },
+ { label: 'Type', val: String(p.policyType || '') },
+ ].map(({ label, val }) => (
+ <div key={label} className="bg-gray-50 rounded-lg p-2"><span className="text-gray-500">{label}</span><p className="font-semibold text-gray-800">{val}</p></div>
+ ))}
+ </div>
+ {(p.guaranteedCash10y as number) > 0 && (
+ <div>
+ <p className="text-xs font-semibold text-gray-700 mb-2">Cash Values</p>
+ <div className="space-y-1">
+ {[
+ { label: 'Guar Y10', val: p.guaranteedCash10y as number, color: 'bg-indigo-500' },
+ { label: 'Guar Y20', val: p.guaranteedCash20y as number, color: 'bg-indigo-400' },
+ { label: 'Proj Y10', val: p.projectedCash10y as number, color: 'bg-green-500' },
+ { label: 'Proj Y20', val: p.projectedCash20y as number, color: 'bg-green-400' },
+ ].map(({ label, val, color }) => (
+ <div key={label} className="flex items-center gap-2">
+ <span className="text-xs text-gray-500 w-20">{label}</span>
+ <div className="flex-1 h-5 bg-gray-100 rounded overflow-hidden"><div className={`h-full ${color} rounded`} style={{ width: `${Math.min((val / Math.max(p.projectedCash20y as number, 1)) * 100, 100)}%`, minWidth: '2px' }} /></div>
+ <span className="text-xs font-medium text-gray-700 w-20 text-right">{fmt(val)}</span>
+ </div>
+ ))}
+ </div>
+ </div>
+ )}
+ <div>
+ <p className="text-xs font-semibold text-gray-700 mb-2">Underwriting & Claims</p>
+ <div className="space-y-1 text-xs text-gray-600">
+ {[
+ { label: 'CI Waiting', val: `${p.waitingPeriodCI || 30} days` },
+ { label: 'Medical Checkup', val: String(p.medicalCheckupRequired || 'Per NML') },
+ { label: 'Smoker Loading', val: `+${p.smokerLoading || 50}%` },
+ { label: 'Co-insurance', val: `${p.coinsurancePct || 10}%` },
+ { label: 'Deductible', val: fmt(p.deductibleRM as number) },
+ { label: 'Premium Holiday', val: (p.premiumHolidayAvailable as boolean) ? 'Available' : 'N/A' },
+ { label: 'Expat Eligible', val: (p.expatEligible as boolean) ? 'Yes' : 'No' },
+ ].map(({ label, val }) => (
+ <div key={label} className="flex justify-between bg-gray-50 rounded px-2 py-1"><span>{label}</span><span className="font-medium">{val}</span></div>
+ ))}
+ </div>
+ </div>
+ {keyBenefits.length > 0 && <div><p className="text-xs font-semibold text-gray-700 mb-2">Key Benefits</p><ul className="space-y-1">{keyBenefits.map((b, i) => <li key={i} className="text-xs text-gray-600 flex gap-2"><span className="text-green-500">✓</span>{b}</li>)}</ul></div>}
+ {keyExclusions.length > 0 && <div><p className="text-xs font-semibold text-gray-700 mb-2">Key Exclusions</p><ul className="space-y-1">{keyExclusions.map((e, i) => <li key={i} className="text-xs text-gray-500 flex gap-2"><span className="text-red-400">✗</span>{e}</li>)}</ul></div>}
+ {(p.claimProcess as string) && <div><p className="text-xs font-semibold text-gray-700 mb-2">Claim Process</p><p className="text-xs text-gray-600 whitespace-pre-line">{p.claimProcess as string}</p></div>}
+ {features.length > 0 && <div className="flex flex-wrap gap-1">{features.map((f, i) => <span key={i} className="text-xs bg-gray-100 text-gray-600 rounded px-2 py-0.5">{f}</span>)}</div>}
+ </div>
+ );
+}
+
+// ─── Product Browser ──────────────────────────────────────────────────────────
+
+function ProductBrowser({ onSelectProduct }: { onSelectProduct: (id: string) => void }) {
+ const [products, setProducts] = useState<Product[]>([]);
+ const [search, setSearch] = useState('');
+ const [loading, setLoading] = useState(true);
+
+ useEffect(() => { fetch(`${API}/api/insurance/products`).then(r => r.json()).then(d => { setProducts(d.products || []); setLoading(false); }).catch(() => setLoading(false)); }, []);
+
+ const filtered = products.filter(pr => !search || pr.productName.toLowerCase().includes(search.toLowerCase()) || pr.provider.toLowerCase().includes(search.toLowerCase()));
+ const providerColors: Record<string, string> = { AIA: 'bg-red-100 text-red-700', 'Great Eastern': 'bg-blue-100 text-blue-700', Prudential: 'bg-orange-100 text-orange-700', Allianz: 'bg-yellow-100 text-yellow-700', Zurich: 'bg-purple-100 text-purple-700', Etiqa: 'bg-green-100 text-green-700', Takaful: 'bg-teal-100 text-teal-700', Manulife: 'bg-indigo-100 text-indigo-700' };
+
+ return (
+ <div className="space-y-2">
+ <div className="relative">
+ <Search className="absolute left-2.5 top-2 w-3.5 h-3.5 text-gray-400" />
+ <input type="text" placeholder="Search products…" value={search} onChange={e => setSearch(e.target.value)}
+ className="w-full pl-8 pr-3 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-300" />
+ </div>
+ {loading ? <div className="flex justify-center py-4"><Loader2 className="w-4 h-4 animate-spin text-gray-400" /></div> : (
+ <div className="space-y-1 max-h-64 overflow-y-auto">
+ {filtered.map(pr => (
+ <button key={pr.id} onClick={() => onSelectProduct(pr.id)}
+ className="w-full text-left p-2 rounded-lg hover:bg-indigo-50 transition border border-transparent hover:border-indigo-100">
+ <div className="flex items-start justify-between gap-1">
+ <div className="min-w-0">
+ <p className="text-xs font-medium text-gray-800 truncate">{pr.productName}</p>
+ <span className={`inline-block text-xs rounded px-1 py-0.5 mt-0.5 ${providerColors[pr.provider] || 'bg-gray-100 text-gray-600'}`}>{pr.provider}</span>
+ </div>
+ <div className="text-right flex-shrink-0">
+ <p className="text-xs font-bold text-indigo-600">{fmt(pr.monthlyPremium)}</p>
+ <p className="text-xs text-gray-400">/mo</p>
+ </div>
+ </div>
+ <div className="flex gap-1 mt-1 flex-wrap">
+ <span className="text-xs text-gray-400">CI: {fmt(pr.ciCover)}</span>
+ {pr.isTakaful && <span className="text-xs text-green-600">Takaful</span>}
+ </div>
+ </button>
+ ))}
+ {filtered.length === 0 && <p className="text-xs text-gray-400 text-center py-4">No products found</p>}
+ </div>
+ )}
+ </div>
+ );
+}
+
+// ─── Session History Sidebar ──────────────────────────────────────────────────
+
+function SessionHistory({ onSelectSession }: { onSelectSession: (sessionId: string) => void }) {
+ const [sessions, setSessions] = useState<SessionSummary[]>([]);
+ const [loading, setLoading] = useState(true);
+ const [loadingMore, setLoadingMore] = useState(false);
+ const [hasMore, setHasMore] = useState(false);
+ const [offset, setOffset] = useState(0);
+
+ const load = useCallback((off: number, append = false) => {
+ if (off > 0) setLoadingMore(true);
+ fetch(`${API}/api/insurance/sessions?limit=10&offset=${off}`)
+ .then(r => r.json())
+ .then(d => {
+ setSessions(prev => append ? [...prev, ...(d.sessions || [])] : (d.sessions || []));
+ setHasMore((d.sessions?.length || 0) >= 10);
+ setOffset(off + (d.sessions?.length || 0));
+ setLoading(false); setLoadingMore(false);
+ })
+ .catch(() => { setLoading(false); setLoadingMore(false); });
+ }, []);
+
+ useEffect(() => { load(0); }, [load]);
+
+ if (loading) return <div className="flex justify-center py-4"><Loader2 className="w-4 h-4 animate-spin text-gray-400" /></div>;
+ if (sessions.length === 0) return <p className="text-xs text-gray-400 text-center py-4">No past sessions yet. Start an analysis to create one.</p>;
+
+ return (
+ <div className="space-y-1">
+ {sessions.map(s => (
+ <button key={s.id} onClick={() => onSelectSession(s.id)}
+ className="w-full text-left p-2 rounded-lg hover:bg-indigo-50 transition border border-gray-100 hover:border-indigo-100">
+ <div className="flex items-center justify-between gap-1">
+ <div className="min-w-0">
+ <p className="text-xs font-medium text-gray-800 truncate">{s.clientName || 'Unknown Client'}</p>
+ <p className="text-xs text-gray-400">{s.date}</p>
+ </div>
+ <div className="text-right flex-shrink-0">
+ <p className="text-xs font-medium text-gray-700">{fmt(s.monthlyBudget)}/mo</p>
+ <p className="text-xs text-gray-400">{fmt(s.annualIncome)}/yr</p>
+ </div>
+ </div>
+ {s.clientIC && <p className="text-xs text-gray-400 mt-0.5">IC: {s.clientIC}</p>}
+ </button>
+ ))}
+ {hasMore && (
+ <button onClick={() => load(offset, true)} disabled={loadingMore}
+ className="w-full text-xs text-indigo-600 hover:text-indigo-800 py-1 flex items-center justify-center gap-1">
+ {loadingMore ? <><Loader2 className="w-3 h-3 animate-spin" /> Loading…</> : 'Load more'}
+ </button>
+ )}
+ </div>
+ );
+}
+
+// ─── Main Page ────────────────────────────────────────────────────────────────
+
+export default function InsurancePage() {
+ const [messages, setMessages] = useState<Message[]>([]);
+ const [input, setInput] = useState('');
+ const [loading, setLoading] = useState(false);
+ const [sessionId, setSessionId] = useState<string | null>(null);
+ const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
+ const [showLeft, setShowLeft] = useState(false);
+ const [showRight, setShowRight] = useState(false);
+ const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
+ const [intakeOpen, setIntakeOpen] = useState(true);
+ const [historyOpen, setHistoryOpen] = useState(false);
+ const [analysisLoading, setAnalysisLoading] = useState(false);
+ // Client intake form state — pre-filled with sensible defaults
+ const [clientName, setClientName] = useState('');
+ const [clientIC, setClientIC] = useState('');
+ const [clientDOB, setClientDOB] = useState('');
+ const [clientAge, setClientAge] = useState<number>(0);
+ const [clientGender, setClientGender] = useState('');
+ const [clientIncome, setClientIncome] = useState<number | undefined>(undefined);
+ const [clientBudget, setClientBudget] = useState<number>(500);
+ const [clientDependents, setClientDependents] = useState<number>(2);
+ const [clientGoals, setClientGoals] = useState<string>('Education, Family Protection');
+ const [existingPolicies, setExistingPolicies] = useState<Array<{ policyType: string; sumAssured: number; premium: number }>>([]);
+
+ const messagesEndRef = useRef<HTMLDivElement>(null);
+ const inputRef = useRef<HTMLTextAreaElement>(null);
+
+ // Welcome message
+ useEffect(() => {
+ if (messages.length === 0) {
+ setMessages([{ id: nanoid(), role: 'assistant', type: 'welcome', suggestions: SUGGESTIONS }]);
+ }
+ }, []);
+
+ useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+
+ // Suggestion chip handler
+ useEffect(() => {
+ const handler = (e: Event) => sendMessage((e as CustomEvent<string>).detail);
+ window.addEventListener('suggestion', handler as EventListener);
+ return () => window.removeEventListener('suggestion', handler as EventListener);
+ }, [sessionId, analysisResult]);
+
+ const sendMessage = useCallback(async (text: string) => {
+ if (!text.trim() || loading) return;
+ const userMsg: Message = { id: nanoid(), role: 'user', type: 'user', content: text };
+ setMessages(prev => [...prev, userMsg]);
+ setInput('');
+ setLoading(true);
+ try {
+ const res = await fetch(`${API}/api/insurance/chat`, {
+ method: 'POST', headers: { 'Content-Type': 'application/json' },
+ body: JSON.stringify({ sessionId: sessionId || undefined, query: text }),
+ });
+ const data = await res.json();
+ if (!res.ok) throw new Error(data.error || 'Failed to get response');
+ const assistantMsg: Message = { id: nanoid(), role: 'assistant', type: data.type, ...data };
+ setMessages(prev => [...prev, assistantMsg]);
+ } catch (err) {
+ toast.error((err as Error).message);
+ setMessages(prev => [...prev, { id: nanoid(), role: 'assistant', type: 'error', content: (err as Error).message }]);
+ } finally {
+ setLoading(false);
+ }
+ }, [loading, sessionId]);
+
+ const handleICExtracted = useCallback((data: { name: string; icNumber: string; dob: string; age: number; gender: string; nationality: string }) => {
+ setClientName(data.name);
+ setClientIC(data.icNumber);
+ setClientDOB(data.dob);
+ setClientAge(data.age);
+ setClientGender(data.gender);
+ if (data.age > 0) toast.success(`IC scanned! Age calculated: ${data.age} years old`);
+ else toast.success('IC scanned! Please verify or enter age manually');
+ }, []);
+
+ const handleStartAnalysis = useCallback(async () => {
+ if (!clientIncome || clientIncome <= 0) {
+ toast.error('Please enter annual income before starting analysis');
+ return;
+ }
+ setAnalysisLoading(true);
+ try {
+ const res = await fetch(`${API}/api/insurance/analyze`, {
+ method: 'POST', headers: { 'Content-Type': 'application/json' },
+ body: JSON.stringify({
+ clientData: {
+ name: clientName, icNumber: clientIC, dob: clientDOB, age: clientAge,
+ gender: clientGender, nationality: 'Malaysian',
+ income: clientIncome,
+ monthlyBudget: clientBudget || 500,
+ dependents: clientDependents,
+ goals: clientGoals || (clientDependents > 0 ? 'Education, Family Protection' : 'Family Protection'),
+ existingPolicies: existingPolicies.length > 0 ? existingPolicies.map(p => ({ policyType: p.policyType, sumAssured: p.sumAssured || 0, premium: p.premium || 0 })) : [],
+ },
+ sessionId: sessionId || undefined,
+ }),
+ });
+ const data = await res.json();
+ if (!res.ok) throw new Error(data.error || 'Analysis failed');
+
+ const result: AnalysisResult = {
+ sessionId: data.sessionId, client: data.client, gapAnalysis: data.gapAnalysis,
+ recommendedProducts: data.recommendedProducts, pitchScript: data.pitchScript,
+ painPoints: data.painPoints || [], notes: data.notes || [],
+ cashValueChart: data.cashValueChart,
+ };
+ setSessionId(data.sessionId);
+ setAnalysisResult(result);
+
+ // Add analysis intro message
+ const introMsg: Message = {
+ id: nanoid(), role: 'assistant', type: 'analysis_intro',
+ client: data.client, gapAnalysis: data.gapAnalysis,
+ products: data.recommendedProducts, notes: data.notes,
+ };
+ setMessages(prev => [...prev, introMsg]);
+ toast.success('Analysis complete!');
+ } catch (err) {
+ toast.error((err as Error).message);
+ } finally {
+ setAnalysisLoading(false);
+ }
+ }, [clientName, clientIC, clientDOB, clientAge, clientGender, clientIncome, clientBudget, clientDependents, clientGoals, existingPolicies, sessionId]);
+
+ const handleSelectSession = useCallback(async (id: string) => {
+ setLoading(true);
+ try {
+ const res = await fetch(`${API}/api/insurance/sessions?limit=1&offset=0`);
+ const data = await res.json();
+ const sessions = data.sessions as SessionSummary[] | undefined;
+ const target = sessions?.find(s => s.id === id);
+ if (target) {
+ setSessionId(id);
+ setAnalysisResult(null);
+ // Reload analysis from analyze endpoint if we have data
+ // For now just switch session
+ setMessages(prev => [...prev, {
+ id: nanoid(), role: 'assistant', type: 'general',
+ response: `Loaded session for "${target.clientName}" (${target.date}). Income: ${fmt(target.annualIncome)}/yr, Budget: ${fmt(target.monthlyBudget)}/mo. Ask a question to continue!`,
+ suggestions: SUGGESTIONS,
+ }]);
+ }
+ } catch (err) {
+ toast.error('Failed to load session');
+ } finally {
+ setLoading(false);
+ }
+ }, []);
+
+ const handleSubmit = (e: React.FormEvent) => { e.preventDefault(); sendMessage(input); };
+ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(input); } };
+
+ // Pre-fill goals when dependents change
+const Test = () => <div>test</div>; export default Test;
