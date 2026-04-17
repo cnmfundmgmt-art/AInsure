@@ -168,16 +168,17 @@ Given a client's profile, you MUST:
 
 // ─── Build user prompt ─────────────────────────────────────────────────────────
 
-function buildUserPrompt(client: Record<string, unknown>, existingText: string) {
+function buildUserPrompt(client: Record<string, unknown>, existingText: string, query?: string, historyContext?: string) {
+  const querySection = query ? `\n\n## Current User Question\nThe advisor is asking: "${query}"\nAnswer this specific question based on the client profile and product catalog above.` : '';
   return `## Client Profile
 - Name: ${client.name || 'Client'}
-- Age: ${client.age} years old
+- Age: ${client.age} years old${historyContext || ''}
 - Gender: ${client.gender || 'Not specified'}
 - Annual Income: RM ${Number(client.income || 0).toLocaleString()}
 - Monthly Budget: RM ${Number(client.monthlyBudget || 0).toLocaleString()}
 - Dependents: ${client.dependents || 0}
 - Goals: ${client.goals || 'Not specified'}
-- Existing Policies: ${existingText}
+- Existing Policies: ${existingText}${querySection}
 
 Provide your AI-powered insurance recommendations in the required JSON format.`;
 }
@@ -193,10 +194,11 @@ async function saveSession(
   const id = sessionId || crypto.randomUUID();
   const now = Math.floor(Date.now() / 1000);
   await db.execute({
-    sql: `INSERT OR REPLACE INTO insurance_analysis_sessions (id, client_name, annual_income, monthly_budget, analysis_data, created_at)
-          VALUES (?, ?, ?, ?, ?, ?)`,
+    sql: `INSERT OR REPLACE INTO insurance_analysis_sessions (id, advisor_id, client_name, annual_income, monthly_budget, analysis_data, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)`,
     args: [
       id,
+      'current-advisor',
       (clientData.name as string) || 'Unknown',
       Number(clientData.income || 0),
       Number(clientData.monthlyBudget || 0),
@@ -216,9 +218,10 @@ export async function POST(req: NextRequest) {
     const body = await req.json() as {
       client: Record<string, unknown>;
       sessionId?: string;
+      query?: string;
     };
 
-    const { client } = body;
+    const { client, query } = body;
     if (!client || !client.age || !client.income) {
       return NextResponse.json({ error: 'Missing age or income' }, { status: 400 });
     }
@@ -228,8 +231,21 @@ export async function POST(req: NextRequest) {
       ? existingPolicies.map((p) => `- ${p.policyType}: RM ${p.sumAssured.toLocaleString()} sum assured, RM ${p.premium.toLocaleString()}/yr`).join('\n')
       : 'None';
 
+    // History context disabled for speed — re-enable if session continuity is needed
+    let historyContext = '';
+    // try {
+    //   const db = getDb();
+    //   const sessionRows = await db.execute({
+    //     sql: `SELECT client_name, analysis_data, created_at
+    //           FROM insurance_analysis_sessions
+    //           WHERE client_name = ? AND id != ?
+    //           ORDER BY created_at DESC LIMIT 1`,
+    //     args: [(client.name as string) || 'Unknown', body.sessionId || ''],
+    //   });
+    //   if (sessionRows.rows && sessionRows.rows.length > 0) { ... }
+    // } catch { /* ignore */ }
     const systemPrompt = buildSystemPrompt(catalog);
-    const userPrompt = buildUserPrompt(client, existingText);
+    const userPrompt = buildUserPrompt(client, existingText, query, historyContext);
 
     let llmText = '';
     try {
@@ -255,13 +271,26 @@ export async function POST(req: NextRequest) {
 
     // Parse JSON from LLM response
     let parsed: Record<string, unknown> = {};
+    let rawText = '';
     try {
       const match = llmText.match(/\{[\s\S]*\}/);
-      if (match) parsed = JSON.parse(match[0]);
-      else parsed = { raw: llmText };
+      if (match) {
+        parsed = JSON.parse(match[0]);
+        // Extract the text portion before the JSON code block (the actual conversational answer)
+        const jsonStart = llmText.indexOf(match[0]);
+        const textBefore = llmText.slice(0, jsonStart).replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
+        rawText = textBefore.length > 0 ? textBefore : '';
+      } else {
+        rawText = llmText.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
+        parsed = {};
+      }
     } catch {
-      parsed = { raw: llmText };
+      rawText = llmText.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
+      parsed = {};
     }
+
+    // Remove any nested `raw` key that the LLM nested inside the JSON itself
+    delete parsed.raw;
 
     // Save session
     const db = getDb();
@@ -271,7 +300,14 @@ export async function POST(req: NextRequest) {
       success: true,
       sessionId: newSessionId,
       client,
-      ...parsed,
+      content: rawText || null,
+      analysis: {
+        summary: parsed.summary as string ?? null,
+        gapAnalysis: parsed.gapAnalysis as object ?? null,
+        recommendations: parsed.recommendations as Array<unknown> ?? [],
+        concerns: Array.isArray(parsed.concerns) ? parsed.concerns : [],
+        nextSteps: Array.isArray(parsed.nextSteps) ? parsed.nextSteps : [],
+      },
     });
   } catch (err) {
     console.error('[recommend] error:', err);

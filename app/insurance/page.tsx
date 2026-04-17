@@ -56,6 +56,8 @@ type Message = {
  explanation?: string;
  guaranteed_meaning?: string;
  projected_meaning?: string;
+ fallback?: boolean;
+ catalogSummary?: { totalProducts: number; byCategory: Record<string, number> };
  disclaimer?: string;
  eligible?: boolean;
  coinsurance_pct?: number;
@@ -90,6 +92,23 @@ type SessionSummary = {
 function fmt(n?: number | null) {
  if (n == null || isNaN(n as number)) return 'N/A';
  return 'RM' + (n as number).toLocaleString('en-MY', { maximumFractionDigits: 0 });
+}
+
+function parsePremium(est: string): number {
+ // Extract monthly premium from strings like "RM4,800-5,500/yr", "RM 240/yr", "RM2,400-3,000/yr"
+ const match = est.match(/RM\s*([\d,]+)/);
+ if (!match) return 0;
+ const num = parseInt(match[1].replace(/,/g, ''));
+ // Divide annual by 12 if "/yr" is in string, otherwise assume it's monthly
+ if (est.toLowerCase().includes('/yr')) return Math.round(num / 12);
+ return num;
+}
+
+function parseSumAssured(s: string): number {
+ // Extract number from strings like "RM1,000,000+ (annual limit)", "RM500,000", "RM125,000"
+ const match = s.match(/RM\s*([\d,]+)/);
+ if (!match) return 0;
+ return parseInt(match[1].replace(/,/g, ''));
 }
 
 function nanoid() {
@@ -577,7 +596,6 @@ function AssistantMessage({ msg }: { msg: Message }) {
  </div>);
  case 'ai_recommendation': return (
  <div className="space-y-4">
- {msg.content && <p className="text-sm text-gray-700 whitespace-pre-line">{msg.content as string}</p>}
  {msg.gap && (
  <div className="border border-gray-200 rounded-xl p-4 bg-gray-50 space-y-3">
  <p className="text-sm font-semibold text-gray-700">Protection Gap Analysis</p>
@@ -618,6 +636,28 @@ function AssistantMessage({ msg }: { msg: Message }) {
  ))}
  </div>
  )}
+ </div>
+ );
+ case 'fallback': return (
+ <div className="space-y-4">
+ <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
+ <AlertTriangle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+ <div>
+ <p className="text-sm font-semibold text-amber-800">AI Service Busy</p>
+ <p className="text-xs text-amber-700 mt-1 whitespace-pre-line">{msg.content as string}</p>
+ {msg.catalogSummary && (
+ <div className="mt-3 bg-white rounded-lg p-3 border border-amber-100">
+ <p className="text-xs font-semibold text-amber-700 mb-2">Product Catalog</p>
+ <p className="text-xs text-amber-600">{msg.catalogSummary.totalProducts} products available</p>
+ <div className="grid grid-cols-2 gap-1 mt-2">
+ {Object.entries(msg.catalogSummary.byCategory as Record<string,number>).map(([cat,count]) => (
+ <div key={cat} className="flex justify-between text-xs"><span className="capitalize">{cat.replace(/_/g,' ')}</span><span className="font-medium">{count}</span></div>
+ ))}
+ </div>
+ </div>
+ )}
+ </div>
+ </div>
  </div>
  );
  default: return (
@@ -900,33 +940,45 @@ export default function InsurancePage() {
  // Render MiniMax's structured JSON response
  const assistantMsg: Message = {
  id: nanoid(), role: 'assistant', type: 'ai_recommendation',
- content: data.summary || data.rawText || JSON.stringify(data, null, 2),
- gap: data.gapAnalysis,
- products: (data.recommendations || []).map((r: Record<string, unknown>, i: number) => ({
+ content: data.analysis?.summary || data.content || '',
+ gap: data.analysis?.gapAnalysis,
+ products: (data.analysis?.recommendations || []).map((r: Record<string, unknown>, i: number) => ({
  rank: i + 1,
  product: {
  id: String(r.productId || ''),
  productName: String(r.productName || r.name || ''),
  provider: String(r.provider || ''),
  policyType: String(r.category || ''),
- monthlyPremium: 0, annualPremium: 0, lifeCover10y: 0, lifeCover20y: 0,
- lifeCover30y: 0, ciCover: 0, medicalCover: 0, isTakaful: false,
+ monthlyPremium: parsePremium(String(r.estimatedPremium || '')),
+ annualPremium: 0,
+ lifeCover10y: parseSumAssured(String(r.sumAssured || '')),
+ lifeCover20y: 0,
+ lifeCover30y: 0,
+ ciCover: r.category === 'critical_illness' ? parseSumAssured(String(r.sumAssured || '')) : 0,
+ medicalCover: r.category === 'medical' ? parseSumAssured(String(r.sumAssured || '')) : 0,
+ isTakaful: false,
  guaranteedCash10y: 0, guaranteedCash20y: 0, guaranteedCash30y: 0,
  projectedCash10y: 0, projectedCash20y: 0, projectedCash30y: 0,
- paymentTermYears: 0, coverageFeatures: (r.keySellingPoints as string[]) || [],
+ paymentTermYears: 0,
+ coverageFeatures: Array.isArray(r.keySellingPoints) ? r.keySellingPoints as string[] : [],
  productSummary: String(r.reason || ''),
  },
  advisorNote: String(r.reason || ''),
  })),
- concerns: data.concerns,
- nextSteps: data.nextSteps,
+ concerns: data.analysis?.concerns,
+ nextSteps: data.analysis?.nextSteps,
  sessionId: data.sessionId,
  };
  if (data.sessionId) setSessionId(data.sessionId as string);
  setMessages(prev => [...prev, assistantMsg]);
  } catch (err) {
  toast.error((err as Error).message);
+ const isMiniMaxErr = (err as Error).message.includes('MiniMax');
+ if (isMiniMaxErr) {
+ setMessages(prev => [...prev, { id: nanoid(), role: 'assistant', type: 'fallback', content: 'AI service is temporarily unavailable due to high demand. Please try again in a few minutes, or browse the product catalog in the sidebar.', fallback: true, catalogSummary: { totalProducts: 75, byCategory: { life: 29, critical_illness: 11, medical: 7, savings_endowment_retirement: 28 } } }]);
+ } else {
  setMessages(prev => [...prev, { id: nanoid(), role: 'assistant', type: 'error', content: (err as Error).message }]);
+ }
  } finally {
  setLoading(false);
  }
@@ -1111,7 +1163,7 @@ return (
  <form onSubmit={handleSubmit} className="flex items-end gap-2">
  <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown}
  placeholder="Ask about coverage, compare products, generate scripts…"
- rows={1} className="flex-1 text-sm border border-gray-200 rounded-xl px-3 py-2.5 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-300 max-h-32 overflow-y-auto" />
+ rows={1} className="flex-1 text-sm text-gray-900 border border-gray-200 rounded-xl px-3 py-2.5 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-300 max-h-32 overflow-y-auto placeholder:text-gray-400" />
  <button type="submit" disabled={!input.trim() || loading}
  className="w-9 h-9 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 text-white rounded-xl flex items-center justify-center transition flex-shrink-0">
  <Send className="w-4 h-4" />
