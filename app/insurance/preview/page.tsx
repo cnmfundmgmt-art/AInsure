@@ -1,36 +1,42 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
-  Shield, ChevronLeft, Loader2, CheckCircle2, AlertCircle,
-  User, DollarSign, Users, Heart, Stethoscope, FileText, Clock
+  Shield, ChevronLeft, ChevronRight, Loader2, CheckCircle, Send,
+  User, DollarSign, Users, Heart, Stethoscope, Target, Briefcase, Gift,
+  Menu, X, Package
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { nanoid } from 'nanoid';
+
+// --- Types ---
 
 interface ClientData {
-  name: string;
-  icNumber: string;
-  dob: string;
   age: number;
-  gender: string;
-  income: number;
-  budget: number;
+  gender: 'male' | 'female';
+  annualIncome: number;
+  smoker: boolean;
+  monthlyBudget: number;
+  coverageTerm: number;
+  intendSumAssured: number;
   dependents: number;
-  goals: string;
-  existingPolicies: Array<{ policyType: string; sumAssured: number; premium: number }>;
-  // New fields
-  smoker?: boolean;
-  nationality?: string;
-  coverageTerm?: string;
-  savingsType?: string;
-  hospitalWard?: string;
-  occupation?: string;
-  existingLifeCover?: number;
-  existingCICover?: number;
-  existingMedicalCover?: number;
+  existingLifeCover: number;
+  existingCICover: number;
+  existingMedicalCover: number;
+  existingEndowmentCover: number;
+  investmentPreference: 'investment-linked' | 'non-investment-linked' | null;
 }
+
+type Message = {
+  id: string;
+  role: 'user' | 'assistant';
+  content?: string;
+  type?: string;
+};
+
+// --- Helpers ---
 
 function fmt(n: number) {
   return 'RM' + n.toLocaleString('en-MY');
@@ -40,232 +46,428 @@ function fmtBudget(n: number) {
   return 'RM' + n.toLocaleString('en-MY') + '/mo';
 }
 
+const SUGGESTIONS = [
+  'Show gap analysis',
+  'Compare Great Eastern vs AIA',
+  'Generate pitch script',
+  'What if budget is RM300?',
+  'Surrender value schedule',
+  'Objection handlers for budget',
+];
+
+// --- Left Panel: Step Wizard ---
+
+function IntakeWizard({ form, updateForm, step, setStep, confirmed, setConfirmed }: {
+  form: ClientData;
+  updateForm: (field: keyof ClientData, value: number | boolean | string) => void;
+  step: number;
+  setStep: (s: number) => void;
+  confirmed: boolean;
+  setConfirmed: (c: boolean) => void;
+}) {
+  const handleNext = () => {
+    if (step < 3) {
+      setStep(step + 1);
+    } else {
+      setConfirmed(true);
+    }
+  };
+
+  const handleBack = () => {
+    if (step > 1) {
+      setStep(step - 1);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Progress */}
+      <div className="flex items-center justify-between">
+        <span className="text-sm font-semibold text-gray-800">Step {step} of 3</span>
+        <Link href="/insurance" className="text-xs text-indigo-600 hover:underline">Exit</Link>
+      </div>
+      <div className="flex gap-1.5">
+        {[1, 2, 3].map(s => (
+          <div key={s} className={`h-1.5 flex-1 rounded-full transition ${step >= s ? 'bg-indigo-600' : 'bg-gray-200'}`} />
+        ))}
+      </div>
+
+      {/* Step 1: About You */}
+      {step === 1 && (
+        <div className="space-y-4">
+          <h3 className="text-sm font-semibold text-gray-800">About You</h3>
+          
+          {/* Age */}
+          <div>
+            <div className="flex justify-between text-xs mb-1">
+              <span className="text-gray-600">Age</span>
+              <span className="font-medium text-indigo-600">{form.age}</span>
+            </div>
+            <input type="range" min="18" max="70" value={form.age}
+              onChange={e => updateForm('age', parseInt(e.target.value))}
+              className="w-full h-1.5 bg-gray-200 rounded appearance-none cursor-pointer accent-indigo-600" />
+          </div>
+
+          {/* Gender */}
+          <div>
+            <span className="text-xs text-gray-600 block mb-1">Gender</span>
+            <div className="flex gap-1">
+              <button onClick={() => updateForm('gender', 'male')}
+                className={`flex-1 py-1.5 text-xs rounded border ${form.gender === 'male' ? 'bg-blue-500 text-white border-blue-500' : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300'}`}>
+                👨 Male
+              </button>
+              <button onClick={() => updateForm('gender', 'female')}
+                className={`flex-1 py-1.5 text-xs rounded border ${form.gender === 'female' ? 'bg-pink-500 text-white border-pink-500' : 'bg-white text-gray-600 border-gray-200 hover:border-pink-300'}`}>
+                👩 Female
+              </button>
+            </div>
+          </div>
+
+          {/* Annual Income */}
+          <div>
+            <div className="flex justify-between text-xs mb-1">
+              <span className="text-gray-600">Annual Income</span>
+              <span className="font-medium text-green-600">{fmt(form.annualIncome)}</span>
+            </div>
+            <input type="range" min="24000" max="300000" step="6000" value={form.annualIncome}
+              onChange={e => updateForm('annualIncome', parseInt(e.target.value))}
+              className="w-full h-1.5 bg-gray-200 rounded appearance-none cursor-pointer accent-green-600" />
+          </div>
+
+          {/* Smoker */}
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-gray-600">Smoker?</span>
+            <button onClick={() => updateForm('smoker', !form.smoker)}
+              className={`w-8 h-4 rounded-full transition ${form.smoker ? 'bg-rose-500' : 'bg-gray-200'}`}>
+              <div className={`w-3.5 h-3.5 bg-white rounded-full shadow transform transition ${form.smoker ? 'translate-x-4' : 'translate-x-0.5'}`} />
+            </button>
+          </div>
+
+          {/* Budget */}
+          <div>
+            <div className="flex justify-between text-xs mb-1">
+              <span className="text-gray-600">Monthly Budget</span>
+              <span className="font-medium text-green-600">{fmtBudget(form.monthlyBudget)}</span>
+            </div>
+            <input type="range" min="100" max="3000" step="50" value={form.monthlyBudget}
+              onChange={e => updateForm('monthlyBudget', parseInt(e.target.value))}
+              className="w-full h-1.5 bg-gray-200 rounded appearance-none cursor-pointer accent-green-600" />
+          </div>
+
+          {/* Coverage Term */}
+          <div>
+            <div className="flex justify-between text-xs mb-1">
+              <span className="text-gray-600">Coverage Term</span>
+              <span className="font-medium text-indigo-600">{form.coverageTerm} yrs</span>
+            </div>
+            <input type="range" min="5" max="30" step="5" value={form.coverageTerm}
+              onChange={e => updateForm('coverageTerm', parseInt(e.target.value))}
+              className="w-full h-1.5 bg-gray-200 rounded appearance-none cursor-pointer accent-indigo-600" />
+          </div>
+        </div>
+      )}
+
+      {/* Step 2: Protection Needs */}
+      {step === 2 && (
+        <div className="space-y-4">
+          <h3 className="text-sm font-semibold text-gray-800">Protection Needs</h3>
+          
+          {/* Sum Assured */}
+          <div>
+            <span className="text-xs text-gray-600 block mb-1">Intend Sum Assured</span>
+            <select value={form.intendSumAssured} onChange={e => updateForm('intendSumAssured', parseInt(e.target.value))}
+              className="w-full px-2 py-1.5 text-xs border border-gray-200 rounded">
+              <option value={50000}>RM50,000</option>
+              <option value={100000}>RM100,000</option>
+              <option value={200000}>RM200,000</option>
+              <option value={300000}>RM300,000</option>
+              <option value={500000}>RM500,000</option>
+              <option value={1000000}>RM1,000,000</option>
+            </select>
+          </div>
+
+          {/* Dependents */}
+          <div>
+            <span className="text-xs text-gray-600 block mb-1">No. of Dependents</span>
+            <div className="flex gap-1">
+              {[0, 1, 2, 3, 4].map(n => (
+                <button key={n} onClick={() => updateForm('dependents', n)}
+                  className={`w-8 h-8 text-xs rounded border ${form.dependents === n ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-600 border-gray-200'}`}>
+                  {n}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Existing Covers */}
+          <div>
+            <span className="text-xs text-gray-600 block mb-2">Existing Coverage</span>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <Heart className="w-3.5 h-3.5 text-blue-500" />
+                <span className="text-xs text-gray-500 w-12">Life</span>
+                <select value={form.existingLifeCover} onChange={e => updateForm('existingLifeCover', parseInt(e.target.value))}
+                  className="flex-1 px-1 py-1 text-xs border border-gray-200 rounded">
+                  <option value={0}>None</option>
+                  <option value={50000}>RM50k</option>
+                  <option value={100000}>RM100k</option>
+                  <option value={200000}>RM200k</option>
+                  <option value={500000}>RM500k</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <Stethoscope className="w-3.5 h-3.5 text-rose-500" />
+                <span className="text-xs text-gray-500 w-12">CI</span>
+                <select value={form.existingCICover} onChange={e => updateForm('existingCICover', parseInt(e.target.value))}
+                  className="flex-1 px-1 py-1 text-xs border border-gray-200 rounded">
+                  <option value={0}>None</option>
+                  <option value={50000}>RM50k</option>
+                  <option value={100000}>RM100k</option>
+                  <option value={200000}>RM200k</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <Shield className="w-3.5 h-3.5 text-amber-500" />
+                <span className="text-xs text-gray-500 w-12">Medical</span>
+                <select value={form.existingMedicalCover} onChange={e => updateForm('existingMedicalCover', parseInt(e.target.value))}
+                  className="flex-1 px-1 py-1 text-xs border border-gray-200 rounded">
+                  <option value={0}>None</option>
+                  <option value={50000}>RM50k</option>
+                  <option value={100000}>RM100k</option>
+                  <option value={200000}>RM200k</option>
+                  <option value={1000000}>RM1M</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Step 3: Preferences */}
+      {step === 3 && (
+        <div className="space-y-4">
+          <h3 className="text-sm font-semibold text-gray-800">Preferences</h3>
+          
+          <p className="text-xs text-gray-600">Investment-linked or traditional?</p>
+          
+          <div className="grid grid-cols-2 gap-2">
+            <button onClick={() => updateForm('investmentPreference', 'investment-linked')}
+              className={`p-2 rounded-lg border-2 transition ${form.investmentPreference === 'investment-linked' ? 'border-emerald-500 bg-emerald-50' : 'border-gray-200 hover:border-gray-300'}`}>
+              <div className="text-lg mb-1">📈</div>
+              <p className="text-xs font-medium">IL</p>
+            </button>
+            <button onClick={() => updateForm('investmentPreference', 'non-investment-linked')}
+              className={`p-2 rounded-lg border-2 transition ${form.investmentPreference === 'non-investment-linked' ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200 hover:border-gray-300'}`}>
+              <div className="text-lg mb-1">🔒</div>
+              <p className="text-xs font-medium">Traditional</p>
+            </button>
+          </div>
+
+          {/* Summary */}
+          {confirmed && (
+            <div className="p-3 bg-gray-50 rounded-lg space-y-1">
+              <p className="text-xs font-semibold text-gray-700">Confirmed</p>
+              <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-xs">
+                <div><span className="text-gray-500">Age:</span> {form.age}</div>
+                <div><span className="text-gray-500">Gender:</span> {form.gender}</div>
+                <div><span className="text-gray-500">Income:</span> {fmt(form.annualIncome)}/yr</div>
+                <div><span className="text-gray-500">Budget:</span> {fmtBudget(form.monthlyBudget)}</div>
+                <div><span className="text-gray-500">Sum:</span> {fmt(form.intendSumAssured)}</div>
+                <div><span className="text-gray-500">Dependents:</span> {form.dependents}</div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Navigation */}
+      <div className="flex gap-2 pt-2">
+        {step > 1 ? (
+          <button onClick={handleBack}
+            className="flex-1 py-2 text-xs border border-gray-200 rounded-lg hover:bg-gray-50">
+            ← Back
+          </button>
+        ) : (
+          <Link href="/insurance" className="flex-1 py-2 text-xs text-center border border-gray-200 rounded-lg hover:bg-gray-50">
+            Cancel
+          </Link>
+        )}
+        <button onClick={handleNext} disabled={step === 3 && !form.investmentPreference}
+          className="flex-1 py-2 text-xs bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:bg-gray-300">
+          {step < 3 ? 'Next →' : confirmed ? '✓ Confirmed' : 'Confirm'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// --- Main ---
+
 export default function InsurancePreview() {
   const router = useRouter();
-  const [loading, setLoading] = useState(false);
+  const [step, setStep] = useState(1);
   const [confirmed, setConfirmed] = useState(false);
-
-  // Demo client data — in real flow this would come from the intake form
-  const client: ClientData = {
-    name: 'ABD RAUF ells HAMSAH',
-    icNumber: '460619-12-5087',
-    dob: '06/19/1946',
-    age: 50,
-    gender: 'Male',
-    income: 100000,
-    budget: 1000,
-    dependents: 1,
-    goals: 'Education, Family Protection',
-    existingPolicies: [],
+  const [showLeft, setShowLeft] = useState(true);
+  const [showRight, setShowRight] = useState(false);
+  
+  // Chat state
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  
+  // Form state
+  const [form, setForm] = useState<ClientData>({
+    age: 30,
+    gender: 'male',
+    annualIncome: 60000,
     smoker: false,
-    nationality: 'Malaysian',
-    coverageTerm: 'Up to age 80',
-    savingsType: 'Protection only (No investment)',
-    hospitalWard: 'Private ward',
-    occupation: 'Professional',
+    monthlyBudget: 500,
+    coverageTerm: 10,
+    intendSumAssured: 100000,
+    dependents: 1,
     existingLifeCover: 0,
     existingCICover: 0,
     existingMedicalCover: 0,
+    existingEndowmentCover: 0,
+    investmentPreference: null,
+  });
+
+  const updateForm = (field: keyof ClientData, value: number | boolean | string) => {
+    setForm(prev => ({ ...prev, [field]: value }));
   };
 
-  const lifeRequired = client.income * 8;
-  const ciRequired = Math.max(client.income * 3, 150000);
-  const medicalRequired = 1000000;
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const lifeGap = Math.max(0, lifeRequired - (client.existingLifeCover || 0));
-  const ciGap = Math.max(0, ciRequired - (client.existingCICover || 0));
-  const medicalGap = Math.max(0, medicalRequired - (client.existingMedicalCover || 0));
-
-  const handleAnalyze = async () => {
-    if (!confirmed) {
-      toast.error('Please confirm the details are accurate before proceeding.');
-      return;
+  // Welcome message
+  useEffect(() => {
+    if (messages.length === 0) {
+      setMessages([{ 
+        id: nanoid(), 
+        role: 'assistant', 
+        type: 'welcome',
+        content: `👋 Hi! I'm your AI Insurance Strategist.\n\nComplete the intake form on the left, then ask me about coverage recommendations, product comparisons, or pitch scripts.`,
+      }]);
     }
-    setLoading(true);
-    // In real flow: POST to /api/insurance/analyze then redirect to insurance page with sessionId
-    setTimeout(() => {
-      toast.success('Analysis complete!');
-      router.push('/insurance');
-    }, 2000);
-  };
+  }, []);
 
-  const totalExistingPremium = client.existingPolicies.reduce((s, p) => s + p.premium, 0);
-  const newPremiumMonthly = client.budget;
+  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+
+  const sendMessage = useCallback(async (text: string) => {
+    if (!text.trim() || loading) return;
+    const userMsg: Message = { id: nanoid(), role: 'user', content: text };
+    setMessages(prev => [...prev, userMsg]);
+    setInput('');
+    setLoading(true);
+
+    try {
+      // Simulated response - in real app, call API
+      await new Promise(r => setTimeout(r, 1000));
+      
+      const assistantMsg: Message = {
+        id: nanoid(),
+        role: 'assistant',
+        content: `Based on:\n• Age: ${form.age}, Income: ${fmt(form.annualIncome)}/yr\n• Budget: ${fmtBudget(form.monthlyBudget)}, Dependents: ${form.dependents}\n• Existing Life: ${form.existingLifeCover ? fmt(form.existingLifeCover) : 'None'}\n\nWhat would you like to know?`,
+      };
+      setMessages(prev => [...prev, assistantMsg]);
+    } catch (err) {
+      toast.error('Failed to get response');
+    } finally {
+      setLoading(false);
+    }
+  }, [form, loading]);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    sendMessage(input);
+  };
 
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-      <div className="w-full max-w-xl">
-        {/* Header */}
-        <div className="flex items-center gap-3 mb-5">
-          <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center">
-            <Shield className="w-5 h-5 text-white" />
+    <div className="flex flex-col h-screen bg-gray-50">
+      {/* Header */}
+      <header className="flex items-center justify-between px-4 py-3 bg-white border-b border-gray-200 shadow-sm z-10">
+        <div className="flex items-center gap-2">
+          <button onClick={() => setShowLeft(!showLeft)} className="lg:hidden text-gray-500 hover:text-gray-700">
+            <Menu className="w-5 h-5" />
+          </button>
+          <Shield className="w-5 h-5 text-indigo-600" />
+          <h1 className="text-sm font-bold text-gray-900">AI Insurance Strategist</h1>
+          <span className="text-xs text-gray-400">Preview</span>
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-gray-500 hidden md:block">
+            {confirmed ? `${form.age} yrs • ${fmtBudget(form.monthlyBudget)}` : 'Incomplete'}
+          </span>
+          <Link href="/dashboard/overview" className="text-xs text-indigo-600 hover:text-indigo-800">← Dashboard</Link>
+        </div>
+      </header>
+
+      <div className="flex flex-1 overflow-hidden">
+        {/* Left sidebar */}
+        <div className={`w-72 bg-white border-r border-gray-200 flex-shrink-0 overflow-y-auto p-4 ${showLeft ? 'block' : 'hidden lg:block'}`}>
+          <IntakeWizard 
+            form={form} 
+            updateForm={updateForm} 
+            step={step} 
+            setStep={setStep}
+            confirmed={confirmed}
+            setConfirmed={setConfirmed}
+          />
+        </div>
+
+        {/* Chat area */}
+        <div className="flex-1 flex flex-col min-w-0">
+          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+            {messages.map(msg => (
+              <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                <div className={`max-w-xl ${msg.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-white border border-gray-200 text-gray-800'} rounded-2xl px-4 py-3 shadow-sm text-sm whitespace-pre-line`}>
+                  {msg.content}
+                </div>
+              </div>
+            ))}
+            {loading && (
+              <div className="flex justify-start">
+                <div className="bg-white border border-gray-200 rounded-2xl px-4 py-3 shadow-sm flex items-center gap-2 text-gray-500 text-sm">
+                  <Loader2 className="w-4 h-4 animate-spin" /><span>Thinking…</span>
+                </div>
+              </div>
+            )}
+            <div ref={messagesEndRef} />
           </div>
-          <div>
-            <h1 className="text-lg font-bold text-gray-900">Client Analysis Preview</h1>
-            <p className="text-xs text-gray-500">Verify details before generating recommendations</p>
+
+          {!loading && messages.length > 1 && (
+            <div className="px-4 pb-2">
+              <div className="flex flex-wrap gap-1.5">
+                {SUGGESTIONS.slice(0, 4).map(s => (
+                  <button key={s} onClick={() => sendMessage(s)}
+                    className="text-xs border border-gray-200 text-gray-600 rounded-full px-3 py-1 hover:bg-indigo-50 hover:border-indigo-200">
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Input */}
+          <div className="border-t border-gray-200 bg-white p-3">
+            <form onSubmit={handleSubmit} className="flex items-end gap-2">
+              <textarea value={input} onChange={e => setInput(e.target.value)}
+                placeholder="Ask about coverage, compare products…"
+                rows={1} className="flex-1 text-sm border border-gray-200 rounded-xl px-3 py-2.5 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-300 placeholder:text-gray-400" />
+              <button type="submit" disabled={!input.trim() || loading}
+                className="w-9 h-9 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 text-white rounded-xl flex items-center justify-center">
+                <Send className="w-4 h-4" />
+              </button>
+            </form>
           </div>
         </div>
 
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-          {/* Personal Details */}
-          <div className="px-5 py-4 border-b border-gray-100">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-sm font-semibold text-gray-800">Personal Details</h2>
-              <Link href="/insurance" className="text-xs text-indigo-600 hover:underline font-medium flex items-center gap-1">
-                <ChevronLeft className="w-3 h-3" /> Edit
-              </Link>
-            </div>
-            <div className="grid grid-cols-2 gap-y-2 gap-x-4 text-sm">
-              <div>
-                <span className="text-xs text-gray-400 block">Full Name</span>
-                <span className="font-medium text-gray-900">{client.name}</span>
-              </div>
-              <div>
-                <span className="text-xs text-gray-400 block">IC Number</span>
-                <span className="font-medium text-gray-900 font-mono text-sm">{client.icNumber}</span>
-              </div>
-              <div>
-                <span className="text-xs text-gray-400 block">Date of Birth</span>
-                <span className="font-medium text-gray-900">{client.dob}</span>
-              </div>
-              <div>
-                <span className="text-xs text-gray-400 block">Age / Gender</span>
-                <span className="font-medium text-gray-900">{client.age} yrs · {client.gender}</span>
-              </div>
-              <div>
-                <span className="text-xs text-gray-400 block">Dependents</span>
-                <span className="font-medium text-indigo-600">{client.dependents}</span>
-              </div>
-              <div>
-                <span className="text-xs text-gray-400 block">Nationality</span>
-                <span className="font-medium text-gray-900">{client.nationality}</span>
-              </div>
-              <div>
-                <span className="text-xs text-gray-400 block">Occupation</span>
-                <span className="font-medium text-gray-900">{client.occupation}</span>
-              </div>
-              <div>
-                <span className="text-xs text-gray-400 block">Smoker</span>
-                <span className={`font-medium ${client.smoker ? 'text-rose-600' : 'text-green-600'}`}>
-                  {client.smoker ? 'Yes' : 'No'}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* Financial Profile */}
-          <div className="px-5 py-4 border-b border-gray-100 bg-gray-50">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-sm font-semibold text-gray-800">Financial Profile</h2>
-              <span className="text-xs bg-indigo-100 text-indigo-700 font-semibold px-2 py-0.5 rounded-full">
-                {fmt(client.income)}/yr
-              </span>
-            </div>
-            <div className="grid grid-cols-3 gap-4 text-sm">
-              <div>
-                <span className="text-xs text-gray-400 block">Annual Income</span>
-                <span className="font-semibold text-green-700">{fmt(client.income)}/yr</span>
-              </div>
-              <div>
-                <span className="text-xs text-gray-400 block">Monthly Budget</span>
-                <span className="font-semibold text-gray-900">{fmtBudget(client.budget)}</span>
-              </div>
-              <div>
-                <span className="text-xs text-gray-400 block">Existing Premium</span>
-                <span className="font-medium text-gray-500">{totalExistingPremium > 0 ? fmt(totalExistingPremium) + '/yr' : '—'}</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Existing Coverage */}
-          <div className="px-5 py-4 border-b border-gray-100">
-            <h2 className="text-sm font-semibold text-gray-800 mb-3">Existing Coverage</h2>
-            <div className="grid grid-cols-3 gap-3">
-              {[
-                { label: 'Life Cover', value: client.existingLifeCover || 0, color: 'blue' },
-                { label: 'CI Cover', value: client.existingCICover || 0, color: 'rose' },
-                { label: 'Medical', value: client.existingMedicalCover || 0, color: 'amber' },
-              ].map(({ label, value, color }) => (
-                <div key={label} className={`rounded-xl border ${value > 0 ? `border-${color}-200 bg-${color}-50` : 'border-gray-200 bg-gray-50'}`}>
-                  <div className="px-3 py-2">
-                    <p className="text-xs text-gray-500">{label}</p>
-                    <p className={`text-sm font-bold mt-0.5 ${value > 0 ? `text-${color}-700` : 'text-gray-400'}`}>
-                      {value > 0 ? fmt(value) : 'None'}
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Coverage Preferences */}
-          <div className="px-5 py-4 border-b border-gray-100 bg-gray-50">
-            <h2 className="text-sm font-semibold text-gray-800 mb-2">Coverage Preferences</h2>
-            <div className="flex flex-wrap gap-2">
-              {[
-                client.coverageTerm && <span key="term" className="text-xs bg-white border border-gray-200 text-gray-700 rounded-lg px-3 py-1.5">📅 {client.coverageTerm}</span>,
-                client.savingsType && <span key="savings" className="text-xs bg-white border border-gray-200 text-gray-700 rounded-lg px-3 py-1.5">💰 {client.savingsType}</span>,
-                client.hospitalWard && <span key="ward" className="text-xs bg-white border border-gray-200 text-gray-700 rounded-lg px-3 py-1.5">🏥 {client.hospitalWard}</span>,
-                client.goals && <span key="goals" className="text-xs bg-white border border-gray-200 text-gray-700 rounded-lg px-3 py-1.5">🎯 {client.goals}</span>,
-              ].filter(Boolean)}
-            </div>
-          </div>
-
-          {/* Calculated Protection Gaps */}
-          <div className="px-5 py-4 border-b border-gray-100">
-            <h2 className="text-sm font-semibold text-gray-800 mb-3">Calculated Protection Gaps</h2>
-            <div className="grid grid-cols-3 gap-3">
-              {[
-                { label: 'Life', amount: lifeGap, sub: `${fmt(lifeRequired)} required · 8× income`, color: 'indigo' },
-                { label: 'Critical Illness', amount: ciGap, sub: `${fmt(ciRequired)} required · 3× income`, color: 'rose' },
-                { label: 'Medical / Hospital', amount: medicalGap, sub: `${fmt(medicalRequired)} required · RM1M min`, color: 'amber' },
-              ].map(({ label, amount, sub, color }) => (
-                <div key={label} className={`rounded-xl border border-${color}-200 bg-${color}-50 px-4 py-3 text-center`}>
-                  <p className="text-xs text-gray-500 mb-1">{label}</p>
-                  <p className={`text-lg font-bold text-${color}-700`}>{fmt(amount)}</p>
-                  <p className="text-xs text-gray-400 mt-1 leading-tight">{sub}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Confirmation */}
-          <div className="px-5 py-4 bg-green-50 border-t border-green-100">
-            <label className="flex items-start gap-3 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={confirmed}
-                onChange={e => setConfirmed(e.target.checked)}
-                className="mt-0.5 w-4 h-4 accent-green-600 cursor-pointer"
-              />
-              <span className="text-xs text-green-800 leading-relaxed">
-                I confirm the details above are accurate. The AI will generate insurance recommendations based on this profile.
-              </span>
-            </label>
-          </div>
-
-          {/* Actions */}
-          <div className="px-5 py-4 flex gap-3 bg-gray-50 border-t border-gray-100">
-            <Link href="/insurance" className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl border border-gray-200 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 transition">
-              <ChevronLeft className="w-4 h-4" /> Back to Edit
-            </Link>
-            <button
-              onClick={handleAnalyze}
-              disabled={!confirmed || loading}
-              className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 disabled:bg-indigo-300 disabled:cursor-not-allowed transition"
-            >
-              {loading ? (
-                <><Loader2 className="w-4 h-4 animate-spin" /> Analyzing…</>
-              ) : (
-                <>Generate Analysis <ChevronLeft className="w-4 h-4 rotate-180" /></>
-              )}
-            </button>
+        {/* Right panel (optional) */}
+        <div className={`w-72 bg-white border-l border-gray-200 flex-shrink-0 overflow-y-auto p-4 ${showRight ? 'block' : 'hidden lg:block'}`}>
+          <div className="flex flex-col items-center justify-center h-32 text-center space-y-2">
+            <Package className="w-8 h-8 text-gray-300" />
+            <p className="text-xs text-gray-400">Product browser coming soon</p>
           </div>
         </div>
-
-        <p className="text-center text-xs text-gray-400 mt-4">
-          Data shown is for demonstration purposes · Preview only
-        </p>
       </div>
     </div>
   );
