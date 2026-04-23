@@ -56,6 +56,8 @@ function fmt(n: number | null | undefined) {
 // ─── MiniMax call ──────────────────────────────────────────────────────────────
 
 async function callMiniMax(system: string, user: string, maxTokens = 2048): Promise<string> {
+  console.log('[MiniMax] API Key:', MINIMAX_API_KEY ? `${MINIMAX_API_KEY.slice(0, 8)}...` : 'NOT SET');
+  console.log('[MiniMax] Base URL:', MINIMAX_BASE_URL);
   const res = await fetch(`${MINIMAX_BASE_URL}/messages`, {
     method: 'POST',
     headers: {
@@ -132,35 +134,18 @@ Given a client's profile, you MUST:
 5. Flag any concerns (age, budget, health)
 6. Suggest next steps
 
+## Output Format
+- Use MARKDOWN format only. DO NOT output JSON.
+- Structure your response with clear headings, bullet points, and markdown tables
+- Use proper markdown table syntax with separator rows (|---|---|)
+- Include emoji sparingly for emphasis
+
 ## Gap Calculation Rules (Malaysia context)
 - Life cover needed: income × 8 (age ≤55) or × 5 (age >55)
 - CI cover needed: income × 3, minimum RM150,000
 - Medical/Hospital: minimum RM1,000,000 (private hospital)
 - Budget constraint: monthly premium must fit within client's stated budget
 
-## Response Format (STRICT JSON — return only valid JSON)
-{
-  "summary": "2-3 sentence overall strategy for this client",
-  "gapAnalysis": {
-    "life": { "required": number, "existing": number, "gap": number },
-    "ci": { "required": number, "existing": number, "gap": number },
-    "medical": { "required": number, "existing": number, "gap": number }
-  },
-  "recommendations": [
-    {
-      "productId": "life-5",
-      "productName": "Product Name",
-      "category": "life|critical_illness|medical|savings",
-      "reason": "Why this product fits this client specifically",
-      "estimatedPremium": "RM X,XXX/yr",
-      "sumAssured": "RM XXX,XXX",
-      "priority": "essential|recommended|optional",
-      "keySellingPoints": ["point1", "point2"]
-    }
-  ],
-  "concerns": ["concern1", "concern2"],
-  "nextSteps": ["step1", "step2"]
-}
 `);
 
   return lines.join('\n');
@@ -180,7 +165,7 @@ function buildUserPrompt(client: Record<string, unknown>, existingText: string, 
 - Goals: ${client.goals || 'Not specified'}
 - Existing Policies: ${existingText}${querySection}
 
-Provide your AI-powered insurance recommendations in the required JSON format.`;
+Provide your AI-powered insurance recommendations`;
 }
 
 // ─── Save session ──────────────────────────────────────────────────────────────
@@ -247,9 +232,13 @@ export async function POST(req: NextRequest) {
     const systemPrompt = buildSystemPrompt(catalog);
     const userPrompt = buildUserPrompt(client, existingText, query, historyContext);
 
+    console.log('[recommend] SYSTEM PROMPT:\n', systemPrompt);
+    console.log('[recommend] USER PROMPT:\n', userPrompt);
+
     let llmText = '';
     try {
       llmText = await callMiniMax(systemPrompt, userPrompt, 2048);
+      console.log('[recommend] LLM RESPONSE:\n', llmText);
     } catch (llmErr) {
       // Fallback: return catalog info for manual selection
       return NextResponse.json({
@@ -269,45 +258,18 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Parse JSON from LLM response
-    let parsed: Record<string, unknown> = {};
-    let rawText = '';
-    try {
-      const match = llmText.match(/\{[\s\S]*\}/);
-      if (match) {
-        parsed = JSON.parse(match[0]);
-        // Extract the text portion before the JSON code block (the actual conversational answer)
-        const jsonStart = llmText.indexOf(match[0]);
-        const textBefore = llmText.slice(0, jsonStart).replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
-        rawText = textBefore.length > 0 ? textBefore : '';
-      } else {
-        rawText = llmText.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
-        parsed = {};
-      }
-    } catch {
-      rawText = llmText.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
-      parsed = {};
-    }
-
-    // Remove any nested `raw` key that the LLM nested inside the JSON itself
-    delete parsed.raw;
+    // Return raw LLM response as plain text
+    const rawText = llmText.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
 
     // Save session
     const db = getDb();
-    const newSessionId = await saveSession(db, body.sessionId || null, client, parsed);
+    const newSessionId = await saveSession(db, body.sessionId || null, client, { raw: rawText });
 
     return NextResponse.json({
       success: true,
       sessionId: newSessionId,
       client,
-      content: rawText || null,
-      analysis: {
-        summary: parsed.summary as string ?? null,
-        gapAnalysis: parsed.gapAnalysis as object ?? null,
-        recommendations: parsed.recommendations as Array<unknown> ?? [],
-        concerns: Array.isArray(parsed.concerns) ? parsed.concerns : [],
-        nextSteps: Array.isArray(parsed.nextSteps) ? parsed.nextSteps : [],
-      },
+      content: rawText,
     });
   } catch (err) {
     console.error('[recommend] error:', err);

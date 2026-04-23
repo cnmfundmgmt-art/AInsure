@@ -3,6 +3,8 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import {
   Shield, ChevronLeft, ChevronRight, Loader2, CheckCircle, Send,
   Heart, Stethoscope, Package, Menu
@@ -79,95 +81,35 @@ function buildClientForAPI(form: ClientData) {
 
 // --- Message renderer ---
 
-
-function renderAssistantResponse(data: Record<string, unknown>, query: string) {
-  const lines: string[] = [];
-
-
-  // Category recommendation with explanation
-  const categoryRec = data.categoryRecommendation as string | undefined;
-  if (categoryRec) {
-    lines.push(`**Recommended Category:** ${categoryRec}\n`);
-  }
-
-
-  // Gap analysis - conversational
-  const gap = data.gapAnalysis as Record<string, Record<string, number>> | undefined;
-  if (gap) {
-    lines.push('**Gap Analysis:**');
-    for (const [category, amounts] of Object.entries(gap)) {
-      const req = amounts.required || 0;
-      const cur = amounts.current || 0;
-      const g = amounts.gap || 0;
-      if (g > 0) {
-        lines.push(`- **${category}**: You need ${fmt(req)} but have ${fmt(cur)}. Gap: ${fmt(g)}`);
-      } else {
-        lines.push(`- **${category}**: ✓ You have ${fmt(cur)}, meets need of ${fmt(req)}`);
+function fixMarkdownTables(text: string): string {
+  const lines = text.split('\n');
+  const result: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    if (trimmed.startsWith('|') && trimmed.endsWith('|')) {
+      const cells = trimmed.split('|').filter(c => c !== '');
+      if (cells.length > 0 && i + 1 < lines.length) {
+        const nextLine = lines[i + 1].trim();
+        if (nextLine.startsWith('|') && nextLine.endsWith('|') && !nextLine.includes('---')) {
+          result.push(line);
+          const sep = cells.map(() => '---').join('|');
+          result.push(sep);
+          i++;
+          continue;
+        }
       }
-    }
-    lines.push('');
-  }
-
-
-  // Top 3 recommendations with why
-  const recs = data.recommendations as Array<Record<string, unknown>> | undefined;
-  if (recs && recs.length > 0) {
-    lines.push('**Top 3 Recommendations:**');
-    recs.slice(0, 3).forEach((rec: Record<string, unknown>, i: number) => {
-      const name = rec.productName || rec.name || 'Unknown';
-      const prov = rec.provider || '';
-      const prem = rec.monthlyPremium ? fmt(rec.monthlyPremium as number) : 'N/A';
-      const note = rec.advisorNote || '';
-      lines.push(`${i + 1}. **${name}** (${prov}) - ${prem}/mo`);
-      if (note) lines.push(`   → ${note}`);
-    });
-    lines.push('');
-  }
-
-
-  // Raw explanation from LLM - could be stringified JSON
-  let rawText = (data.content || data.explanation || data.analysis) as string | undefined;
-  if (rawText && typeof rawText === 'string') {
-    // Try to detect and parse JSON object
-    const trimmed = rawText.trim();
-    if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
-      try {
-        const parsed = JSON.parse(trimmed);
-        // If parsed successfully, extract the summary
-        if (parsed.summary) {
-          lines.push(`**Summary:**\n${parsed.summary.slice(0, 500)}\n`);
-        }
-        // Re-extract gap and recommendations from parsed JSON
-        if (parsed.gapAnalysis) {
-          lines.push('**Gap Analysis:**');
-          for (const [cat, amounts] of Object.entries(parsed.gapAnalysis as Record<string, { required: number; existing: number; gap: number }>)) {
-            const { required, existing, gap } = amounts as { required: number; existing: number; gap: number };
-            if (gap > 0) lines.push(`- ${cat}: Need ${fmt(required)}, Have ${fmt(existing)}, Gap ${fmt(gap)}`);
-            else lines.push(`- ${cat}: ✓ Covered (${fmt(existing)})`);
-          }
-          lines.push('');
-        }
-        if (parsed.recommendations && Array.isArray(parsed.recommendations)) {
-          lines.push('**Top Recommendations:**');
-          parsed.recommendations.slice(0, 3).forEach((r: Record<string, unknown>, i: number) => {
-            lines.push(`${i + 1}. **${r.productName}** (${r.estimatedPremium})`);
-            if (r.reason) lines.push(`   → ${(r.reason as string).slice(0, 150)}`);
-          });
-        }
-      } catch {
-        // Not valid JSON, show cleaned text
-        lines.push(trimmed.slice(0, 1500));
-      }
+      result.push(line);
     } else {
-      // Clean up markdown and show
-      const cleaned = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
-      if (cleaned.length > 0 && lines.length <= 2) {
-        lines.push(cleaned.slice(0, 1500));
-      }
+      result.push(line);
     }
   }
+  return result.join('\n');
+}
 
-  return lines.join('\n') || 'Analyzing your requirements…';
+function renderAssistantResponse(data: Record<string, unknown>, _query: string) {
+  const rawText = (data.content as string) || '';
+  return fixMarkdownTables(rawText) || 'Analyzing your requirements…';
 }
 
 // --- Left Panel: Step Wizard ---
@@ -211,7 +153,7 @@ function IntakeWizard({ form, updateForm, step, setStep, confirmed, setConfirmed
       {step === 1 && (
         <div className="space-y-4">
           <h3 className="text-sm font-semibold text-gray-800">About You</h3>
-          
+
           {/* Age */}
           <div>
             <div className="flex justify-between text-xs mb-1">
@@ -286,7 +228,7 @@ function IntakeWizard({ form, updateForm, step, setStep, confirmed, setConfirmed
       {step === 2 && (
         <div className="space-y-4">
           <h3 className="text-sm font-semibold text-gray-800">Protection Needs</h3>
-          
+
           {/* Sum Assured */}
           <div>
             <span className="text-xs text-gray-500 block mb-1">Intend Sum Assured</span>
@@ -362,9 +304,9 @@ function IntakeWizard({ form, updateForm, step, setStep, confirmed, setConfirmed
       {step === 3 && (
         <div className="space-y-4">
           <h3 className="text-sm font-semibold text-gray-800">Preferences</h3>
-          
+
           <p className="text-xs text-gray-500">Investment-linked or traditional?</p>
-          
+
           <div className="grid grid-cols-2 gap-2">
             <button onClick={() => updateForm('investmentPreference', 'investment-linked')}
               className={`p-2 rounded-lg border-2 transition ${form.investmentPreference === 'investment-linked' ? 'border-emerald-500 bg-emerald-50' : 'border-gray-200 hover:border-gray-300'}`}>
@@ -459,12 +401,12 @@ export default function InsurancePreview() {
   const [confirmed, setConfirmed] = useState(false);
   const [showLeft, setShowLeft] = useState(true);
   const [showRight, setShowRight] = useState(false);
-  
+
   // Chat state
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  
+
   // Form state
   const [form, setForm] = useState<ClientData>({
     age: 30,
@@ -491,9 +433,9 @@ export default function InsurancePreview() {
   // Welcome message
   useEffect(() => {
     if (messages.length === 0) {
-      setMessages([{ 
-        id: nanoid(), 
-        role: 'assistant', 
+      setMessages([{
+        id: nanoid(),
+        role: 'assistant',
         type: 'welcome',
         content: `👋 Hi! I'm your AI Insurance Strategist.\n\nComplete the intake form on the left, then ask me about coverage recommendations, product comparisons, or pitch scripts.`,
       }]);
@@ -526,7 +468,22 @@ export default function InsurancePreview() {
           content += `\n\n📦 Products: ${cs.totalProducts} total\n• Life: ${cs.byCategory.life}\n• CI: ${cs.byCategory.critical_illness}\n• Medical: ${cs.byCategory.medical}\n• Savings: ${cs.byCategory.savings}`;
         }
       } else if (data.success !== false) {
-        content = renderAssistantResponse(data, text);
+        content = (data.content as string) || '';
+        console.log(content)
+        // if (!content && data.analysis) {
+        //   const a = data.analysis as Record<string, unknown>;
+        //   if (a.summary) content += `**Summary:** ${a.summary}\n\n`;
+        //   if (a.gapAnalysis) content += `**Gap Analysis:** ${JSON.stringify(a.gapAnalysis)}\n\n`;
+        //   if (Array.isArray(a.recommendations) && a.recommendations.length > 0) {
+        //     content += `**Recommendations:**\n`;
+        //     a.recommendations.forEach((r: unknown, i: number) => {
+        //       const rec = r as Record<string, unknown>;
+        //       content += `${i + 1}. **${rec.productName || rec.name || 'Product'}**\n`;
+        //       if (rec.estimatedPremium) content += `   Premium: ${rec.estimatedPremium}\n`;
+        //       if (rec.reason) content += `   ${rec.reason}\n`;
+        //     });
+        //   }
+        // }
       } else {
         content = data.error || 'Something went wrong. Please try again.';
       }
@@ -572,10 +529,10 @@ export default function InsurancePreview() {
       <div className="flex flex-1 overflow-hidden">
         {/* Left sidebar */}
         <div className={`w-72 bg-white border-r border-gray-200 flex-shrink-0 overflow-y-auto p-4 ${showLeft ? 'block' : 'hidden lg:block'}`}>
-          <IntakeWizard 
-            form={form} 
-            updateForm={updateForm} 
-            step={step} 
+          <IntakeWizard
+            form={form}
+            updateForm={updateForm}
+            step={step}
             setStep={setStep}
             confirmed={confirmed}
             setConfirmed={setConfirmed}
@@ -587,8 +544,16 @@ export default function InsurancePreview() {
           <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
             {messages.map(msg => (
               <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-xl ${msg.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-white border border-gray-200 text-gray-800'} rounded-2xl px-4 py-3 shadow-sm text-sm whitespace-pre-line`}>
-                  {msg.content}
+                <div className={`max-w-xl ${msg.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-white border border-gray-200 text-gray-800'} rounded-2xl px-4 py-3 shadow-sm text-sm`}>
+                  {msg.role === 'assistant' && msg.content ? (
+                    <div className="overflow-x-auto">
+                      <div className="markdown-content overflow-x-auto">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                    </div>
+                    </div>
+                  ) : (
+                    <span className="whitespace-pre-line">{msg.content}</span>
+                  )}
                 </div>
               </div>
             ))}
