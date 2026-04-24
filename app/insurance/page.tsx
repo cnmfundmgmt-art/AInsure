@@ -305,7 +305,7 @@ function IntakeWizard({ form, updateForm, step, setStep, confirmed, setConfirmed
         <div className="space-y-4">
           <h3 className="text-sm font-semibold text-gray-800">Preferences</h3>
 
-          <p className="text-gray-900">Investment-linked or traditional?</p>
+
 
           <div className="grid grid-cols-2 gap-2">
             <button onClick={() => updateForm('investmentPreference', 'investment-linked')}
@@ -544,10 +544,7 @@ export default function InsurancePreview() {
           <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
             {messages.map(msg => (
               <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-3xl ${msg.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-white border border-gray-200 text-gray-900'} rounded-2xl px-4 py-3 shadow-sm text-sm`}>
-                  {msg.role === 'assistant' && msg.content ? (
-                    <div className="px-4 max-w-6xl">
-                      <div className="markdown-content">
+
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
                     </div>
                     </div>
