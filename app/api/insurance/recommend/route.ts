@@ -28,9 +28,14 @@ interface Product {
   [key: string]: unknown;
 }
 
+interface CatalogData {
+  products: Product[];
+  fields: Record<string, Record<string, string>>;
+}
+
 // ─── Load catalog ──────────────────────────────────────────────────────────────
 
-async function loadCatalog(): Promise<Product[]> {
+async function loadCatalog(): Promise<CatalogData> {
   try {
     const fs = await import('fs');
     const path = await import('path');
@@ -38,10 +43,13 @@ async function loadCatalog(): Promise<Product[]> {
     if (fs.existsSync(p)) {
       const raw = fs.readFileSync(p, 'utf-8');
       const data = JSON.parse(raw);
-      return data.products || [];
+      return {
+        products: data.products || [],
+        fields: data.fields || {}
+      };
     }
   } catch { /* ignore */ }
-  return [];
+  return { products: [], fields: {} };
 }
 
 function getDb() {
@@ -92,7 +100,7 @@ async function callMiniMax(system: string, user: string, maxTokens = 2048): Prom
 
 // ─── System prompt ─────────────────────────────────────────────────────────────
 
-function buildSystemPrompt(products: Product[]) {
+function buildSystemPrompt(products: Product[], fields: Record<string, Record<string, string>>) {
   const byCategory = {
     life: products.filter((p) => p.category === 'life'),
     critical_illness: products.filter((p) => p.category === 'critical_illness'),
@@ -112,16 +120,19 @@ function buildSystemPrompt(products: Product[]) {
     if (!prods.length) continue;
     lines.push(`\n### ${cat.replace(/_/g, ' ').toUpperCase()} (${prods.length} products)`);
     for (const p of prods.slice(0, 40)) {
-      const sa = p.minSumAssuredAmount != null ? fmt(p.minSumAssuredAmount) : 'Varies';
-      const prem = p.minPremiumAmount != null ? fmt(p.minPremiumAmount) + '/yr' : 'Varies';
-      const age = p.entryAgeMin != null && p.entryAgeMax != null ? `${p.entryAgeMin}-${p.entryAgeMax}` : 'Varies';
-      const coverage = p.coverageTermParsed?.value != null
-        ? (p.coverageTermParsed.type === 'lifetime' ? 'Lifetime' : `${p.coverageTermParsed.value} yrs`)
-        : (p.coverageTermParsed?.type === 'unknown' ? 'Varies' : 'Varies');
-      const features = p.keyFeatures ? p.keyFeatures.slice(0, 100) : '';
-      lines.push(`- **${p.name}** (${p.provider}) | Entry: ${age} | SA: ${sa} | Prem: ${prem} | Coverage: ${coverage} | ${features}`);
+      lines.push(`- **${p['Product Name'] || 'Unnamed'}** (${p['Provider'] || 'N/A'}) | SA: ${p['Min. SA'] || 'Varies'} | Prem: ${p['Min. Premium'] || 'Varies'} | Entry: ${p['Min Entry Age'] && p['Max Entry Age'] ? p['Min Entry Age'] + '-' + p['Max Entry Age'] : 'Varies'} | Coverage: ${p['Coverage Term'] || 'Varies'} | ${p['Par / Non-Par'] || ''} ${p['IL / Non-IL'] || ''} | ${(p['Key Features'] || '').slice(0, 80)}`);
     }
     if (prods.length > 40) lines.push(`  ... and ${prods.length - 40} more ${cat} products`);
+  }
+
+  lines.push(`
+## Field Descriptions\nUse these descriptions to explain product fields to the client:\n`);
+  for (const [cat, fieldDescs] of Object.entries(fields) as [string, Record<string, string>][]) {
+    if (!cat || Object.keys(fieldDescs).length === 0) continue;
+    lines.push(`\n### ${cat.replace(/_/g, ' ').toUpperCase()} Fields`);
+    for (const [field, desc] of Object.entries(fieldDescs)) {
+      lines.push(`- **${field}**: ${desc}`);
+    }
   }
 
   lines.push(`
@@ -229,7 +240,7 @@ export async function POST(req: NextRequest) {
     //   });
     //   if (sessionRows.rows && sessionRows.rows.length > 0) { ... }
     // } catch { /* ignore */ }
-    const systemPrompt = buildSystemPrompt(catalog);
+    const systemPrompt = buildSystemPrompt(catalog.products, catalog.fields);
     const userPrompt = buildUserPrompt(client, existingText, query, historyContext);
 
     console.log('[recommend] SYSTEM PROMPT:\n', systemPrompt);
@@ -246,12 +257,12 @@ export async function POST(req: NextRequest) {
         error: (llmErr as Error).message,
         fallback: true,
         catalogSummary: {
-          totalProducts: catalog.length,
+          totalProducts: catalog.products.length,
           byCategory: {
-            life: catalog.filter((p) => p.category === 'life').length,
-            critical_illness: catalog.filter((p) => p.category === 'critical_illness').length,
-            medical: catalog.filter((p) => p.category === 'medical').length,
-            savings: catalog.filter((p) => p.category === 'savings_endowment_retirement').length,
+            life: catalog.products.filter((p: Product) => p.category === 'life').length,
+            critical_illness: catalog.products.filter((p: Product) => p.category === 'critical_illness').length,
+            medical: catalog.products.filter((p: Product) => p.category === 'medical').length,
+            savings: catalog.products.filter((p: Product) => p.category === 'savings_endowment_retirement').length,
           },
         },
         message: 'MiniMax unavailable. Showing catalog summary instead.',

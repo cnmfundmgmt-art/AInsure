@@ -157,7 +157,7 @@ function IntakeWizard({ form, updateForm, step, setStep, confirmed, setConfirmed
           {/* Age */}
           <div>
             <div className="flex justify-between text-xs mb-1">
-              <span className="text-gray-500">Age</span>
+              <span className="text-gray-900">Age</span>
               <span className="font-medium text-gray-900">{form.age}</span>
             </div>
             <input type="range" min="18" max="70" value={form.age}
@@ -167,7 +167,7 @@ function IntakeWizard({ form, updateForm, step, setStep, confirmed, setConfirmed
 
           {/* Gender */}
           <div>
-            <span className="text-xs text-gray-500 block mb-1">Gender</span>
+            <span className="text-gray-900 block mb-1">Gender</span>
             <div className="flex gap-1">
               <button onClick={() => updateForm('gender', 'male')}
                 className={`flex-1 py-1.5 text-xs rounded border ${form.gender === 'male' ? 'bg-blue-500 text-white border-blue-500' : 'bg-white text-gray-900 border-gray-200 hover:border-blue-300'}`}>
@@ -183,7 +183,7 @@ function IntakeWizard({ form, updateForm, step, setStep, confirmed, setConfirmed
           {/* Annual Income */}
           <div>
             <div className="flex justify-between text-xs mb-1">
-              <span className="text-gray-500">Annual Income</span>
+              <span className="text-gray-900">Annual Income</span>
               <span className="font-medium text-gray-900">{fmt(form.annualIncome)}</span>
             </div>
             <input type="range" min="24000" max="300000" step="6000" value={form.annualIncome}
@@ -193,7 +193,7 @@ function IntakeWizard({ form, updateForm, step, setStep, confirmed, setConfirmed
 
           {/* Smoker */}
           <div className="flex items-center justify-between">
-            <span className="text-xs text-gray-500">Smoker?</span>
+            <span className="text-gray-900">Smoker?</span>
             <button onClick={() => updateForm('smoker', !form.smoker)}
               className={`w-8 h-4 rounded-full transition ${form.smoker ? 'bg-rose-500' : 'bg-gray-200'}`}>
               <div className={`w-3.5 h-3.5 bg-white rounded-full shadow transform transition ${form.smoker ? 'translate-x-4' : 'translate-x-0.5'}`} />
@@ -203,7 +203,7 @@ function IntakeWizard({ form, updateForm, step, setStep, confirmed, setConfirmed
           {/* Budget */}
           <div>
             <div className="flex justify-between text-xs mb-1">
-              <span className="text-gray-500">Monthly Budget</span>
+              <span className="text-gray-900">Monthly Budget</span>
               <span className="font-medium text-gray-900">{fmtBudget(form.monthlyBudget)}</span>
             </div>
             <input type="range" min="100" max="3000" step="50" value={form.monthlyBudget}
@@ -214,7 +214,7 @@ function IntakeWizard({ form, updateForm, step, setStep, confirmed, setConfirmed
           {/* Coverage Term */}
           <div>
             <div className="flex justify-between text-xs mb-1">
-              <span className="text-gray-500">Coverage Term</span>
+              <span className="text-gray-900">Coverage Term</span>
               <span className="font-medium text-gray-900">{form.coverageTerm} yrs</span>
             </div>
             <input type="range" min="5" max="30" step="5" value={form.coverageTerm}
@@ -231,7 +231,7 @@ function IntakeWizard({ form, updateForm, step, setStep, confirmed, setConfirmed
 
           {/* Sum Assured */}
           <div>
-            <span className="text-xs text-gray-500 block mb-1">Intend Sum Assured</span>
+            <span className="text-gray-900 block mb-1">Intend Sum Assured</span>
             <select value={form.intendSumAssured} onChange={e => updateForm('intendSumAssured', parseInt(e.target.value))}
               className="w-full px-2 py-1.5 text-xs border border-gray-200 rounded text-gray-900">
               <option value={50000}>RM50,000</option>
@@ -245,7 +245,7 @@ function IntakeWizard({ form, updateForm, step, setStep, confirmed, setConfirmed
 
           {/* Dependents */}
           <div>
-            <span className="text-xs text-gray-500 block mb-1">No. of Dependents</span>
+            <span className="text-gray-900 block mb-1">No. of Dependents</span>
             <div className="flex gap-1">
               {[0, 1, 2, 3, 4].map(n => (
                 <button key={n} onClick={() => updateForm('dependents', n)}
@@ -258,11 +258,11 @@ function IntakeWizard({ form, updateForm, step, setStep, confirmed, setConfirmed
 
           {/* Existing Covers */}
           <div>
-            <span className="text-xs text-gray-500 block mb-2">Existing Coverage</span>
+            <span className="text-gray-900 block mb-2">Existing Coverage</span>
             <div className="space-y-2">
               <div className="flex items-center gap-2">
                 <Heart className="w-3.5 h-3.5 text-blue-500" />
-                <span className="text-xs text-gray-500 w-12">Life</span>
+                <span className="text-gray-900 w-12">Life</span>
                 <select value={form.existingLifeCover} onChange={e => updateForm('existingLifeCover', parseInt(e.target.value))}
                   className="flex-1 px-1 py-1 text-xs border border-gray-200 rounded text-gray-900">
                   <option value={0}>None</option>
@@ -274,7 +274,7 @@ function IntakeWizard({ form, updateForm, step, setStep, confirmed, setConfirmed
               </div>
               <div className="flex items-center gap-2">
                 <Stethoscope className="w-3.5 h-3.5 text-rose-500" />
-                <span className="text-xs text-gray-500 w-12">CI</span>
+                <span className="text-gray-900 w-12">CI</span>
                 <select value={form.existingCICover} onChange={e => updateForm('existingCICover', parseInt(e.target.value))}
                   className="flex-1 px-1 py-1 text-xs border border-gray-200 rounded text-gray-900">
                   <option value={0}>None</option>
@@ -285,7 +285,7 @@ function IntakeWizard({ form, updateForm, step, setStep, confirmed, setConfirmed
               </div>
               <div className="flex items-center gap-2">
                 <Shield className="w-3.5 h-3.5 text-amber-500" />
-                <span className="text-xs text-gray-500 w-12">Medical</span>
+                <span className="text-gray-900 w-12">Medical</span>
                 <select value={form.existingMedicalCover} onChange={e => updateForm('existingMedicalCover', parseInt(e.target.value))}
                   className="flex-1 px-1 py-1 text-xs border border-gray-200 rounded text-gray-900">
                   <option value={0}>None</option>
@@ -305,7 +305,7 @@ function IntakeWizard({ form, updateForm, step, setStep, confirmed, setConfirmed
         <div className="space-y-4">
           <h3 className="text-sm font-semibold text-gray-800">Preferences</h3>
 
-          <p className="text-xs text-gray-500">Investment-linked or traditional?</p>
+          <p className="text-gray-900">Investment-linked or traditional?</p>
 
           <div className="grid grid-cols-2 gap-2">
             <button onClick={() => updateForm('investmentPreference', 'investment-linked')}
@@ -325,7 +325,7 @@ function IntakeWizard({ form, updateForm, step, setStep, confirmed, setConfirmed
             <div className="space-y-3">
               <div className="p-3 bg-green-50 rounded-lg space-y-1">
                 <p className="text-xs font-semibold text-green-700">✓ Confirmed</p>
-                <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-xs">
+                <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-xs text-gray-900">
                   <div><span className="text-gray-900">Age:</span> {form.age}</div>
                   <div><span className="text-gray-900">Gender:</span> {form.gender}</div>
                   <div><span className="text-gray-900">Income:</span> {fmt(form.annualIncome)}/yr</div>
@@ -339,28 +339,28 @@ function IntakeWizard({ form, updateForm, step, setStep, confirmed, setConfirmed
               <div className="p-3 bg-indigo-50 rounded-lg space-y-2">
                 <p className="text-xs font-semibold text-indigo-700">Protection Gaps</p>
                 {(() => {
-                  const lifeRequired = form.age < 45 ? form.intendSumAssured : form.intendSumAssured * 8;
+                  const lifeRequired = form.age <= 55 ? form.annualIncome * 8 : form.annualIncome * 5;
                   const ciRequired = Math.max(form.annualIncome * 3, 150000);
-                  const medicalRequired = form.monthlyBudget >= 800 ? 1000000 : form.monthlyBudget >= 500 ? 500000 : 200000;
+                  const medicalRequired = 1000000; // RM1M standard
                   const lifeGap = Math.max(0, lifeRequired - form.existingLifeCover);
                   const ciGap = Math.max(0, ciRequired - form.existingCICover);
                   const medicalGap = Math.max(0, medicalRequired - form.existingMedicalCover);
                   return (
                     <>
                       <div className="flex justify-between text-xs">
-                        <span className="text-gray-500">Life (8× income)</span>
+                        <span className="text-gray-900">Life (8× income)</span>
                         <span className={lifeGap > 0 ? 'text-rose-600 font-medium' : 'text-green-600'}>
                           {lifeGap > 0 ? fmt(lifeGap) + ' gap' : '✓ OK'}
                         </span>
                       </div>
                       <div className="flex justify-between text-xs">
-                        <span className="text-gray-500">CI (3× income)</span>
+                        <span className="text-gray-900">CI (3× income)</span>
                         <span className={ciGap > 0 ? 'text-rose-600 font-medium' : 'text-green-600'}>
                           {ciGap > 0 ? fmt(ciGap) + ' gap' : '✓ OK'}
                         </span>
                       </div>
                       <div className="flex justify-between text-xs">
-                        <span className="text-gray-500">Medical (RM1M)</span>
+                        <span className="text-gray-900">Medical (RM1M)</span>
                         <span className={medicalGap > 0 ? 'text-rose-600 font-medium' : 'text-green-600'}>
                           {medicalGap > 0 ? fmt(medicalGap) + ' gap' : '✓ OK'}
                         </span>
@@ -511,15 +511,15 @@ export default function InsurancePreview() {
       {/* Header */}
       <header className="flex items-center justify-between px-4 py-3 bg-white border-b border-gray-200 shadow-sm z-10">
         <div className="flex items-center gap-2">
-          <button onClick={() => setShowLeft(!showLeft)} className="lg:hidden text-gray-500 hover:text-gray-700">
+          <button onClick={() => setShowLeft(!showLeft)} className="lg:hidden text-gray-900 hover:text-gray-700">
             <Menu className="w-5 h-5" />
           </button>
           <Shield className="w-5 h-5 text-indigo-600" />
           <h1 className="text-sm font-bold text-gray-900">AI Insurance Strategist</h1>
-          <span className="text-xs text-gray-400">Preview</span>
+          <span className="text-gray-900">Preview</span>
         </div>
         <div className="flex items-center gap-3">
-          <span className="text-xs text-gray-500 hidden md:block">
+          <span className="text-gray-900 hidden md:block">
             {confirmed ? `${form.age} yrs • ${fmtBudget(form.monthlyBudget)}` : 'Incomplete'}
           </span>
           <Link href="/dashboard/overview" className="text-xs text-indigo-600 hover:text-indigo-800">← Dashboard</Link>
@@ -544,10 +544,10 @@ export default function InsurancePreview() {
           <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
             {messages.map(msg => (
               <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-xl ${msg.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-white border border-gray-200 text-gray-800'} rounded-2xl px-4 py-3 shadow-sm text-sm`}>
+                <div className={`max-w-3xl ${msg.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-white border border-gray-200 text-gray-900'} rounded-2xl px-4 py-3 shadow-sm text-sm`}>
                   {msg.role === 'assistant' && msg.content ? (
-                    <div className="overflow-x-auto">
-                      <div className="markdown-content overflow-x-auto">
+                    <div className="px-4 max-w-6xl">
+                      <div className="markdown-content">
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
                     </div>
                     </div>
@@ -559,7 +559,7 @@ export default function InsurancePreview() {
             ))}
             {loading && (
               <div className="flex justify-start">
-                <div className="bg-white border border-gray-200 rounded-2xl px-4 py-3 shadow-sm flex items-center gap-2 text-gray-500 text-sm">
+                <div className="bg-white border border-gray-200 rounded-2xl px-4 py-3 shadow-sm flex items-center gap-2 text-gray-900 text-sm">
                   <Loader2 className="w-4 h-4 animate-spin" /><span>Thinking…</span>
                 </div>
               </div>
@@ -585,7 +585,7 @@ export default function InsurancePreview() {
             <form onSubmit={handleSubmit} className="flex items-end gap-2">
               <textarea value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(input); } }}
                 placeholder="Ask about coverage, compare products…"
-                rows={1} className="flex-1 text-sm border border-gray-200 rounded-xl px-3 py-2.5 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-300 placeholder:text-gray-400" />
+                rows={1} className="flex-1 text-sm text-gray-900 border border-gray-200 rounded-xl px-3 py-2.5 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-300 placeholder:text-gray-900" />
               <button type="submit" disabled={!input.trim() || loading}
                 className="w-9 h-9 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 text-white rounded-xl flex items-center justify-center">
                 <Send className="w-4 h-4" />
@@ -597,8 +597,8 @@ export default function InsurancePreview() {
         {/* Right panel (optional) */}
         <div className={`w-72 bg-white border-l border-gray-200 flex-shrink-0 overflow-y-auto p-4 ${showRight ? 'block' : 'hidden lg:block'}`}>
           <div className="flex flex-col items-center justify-center h-32 text-center space-y-2">
-            <Package className="w-8 h-8 text-gray-300" />
-            <p className="text-xs text-gray-400">Product browser coming soon</p>
+            <Package className="w-8 h-8 text-gray-900" />
+            <p className="text-gray-900">Product browser coming soon</p>
           </div>
         </div>
       </div>
