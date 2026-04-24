@@ -4,8 +4,17 @@ import { createClient } from '@libsql/client';
 const DATABASE_URL = process.env.DATABASE_URL || 'file:./data/cfp_local.db';
 const MINIMAX_API_KEY = process.env.MINIMAX_API_KEY || '';
 const MINIMAX_BASE_URL = process.env.MINIMAX_BASE_URL || 'https://api.minimax.io/anthropic/v1';
+const MINIMAX_FILE_URL = 'https://api.minimax.io/v1/files/upload';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+
+interface Attachment {
+  id: string;
+  name: string;
+  type: string;
+  size: number;
+  data: string;
+}
 
 interface Product {
   id: string;
@@ -63,9 +72,8 @@ function fmt(n: number | null | undefined) {
 
 // ─── MiniMax call ──────────────────────────────────────────────────────────────
 
-async function callMiniMax(system: string, user: string, maxTokens = 2048): Promise<string> {
-  console.log('[MiniMax] API Key:', MINIMAX_API_KEY ? `${MINIMAX_API_KEY.slice(0, 8)}...` : 'NOT SET');
-  console.log('[MiniMax] Base URL:', MINIMAX_BASE_URL);
+async function callMiniMaxStream(system: string, user: string, callback: (text: string) => void, maxTokens = 2048): Promise<void> {
+  console.log('[MiniMax] Streaming...');
   const res = await fetch(`${MINIMAX_BASE_URL}/messages`, {
     method: 'POST',
     headers: {
@@ -77,6 +85,7 @@ async function callMiniMax(system: string, user: string, maxTokens = 2048): Prom
     body: JSON.stringify({
       model: 'MiniMax-M2.7',
       max_tokens: maxTokens,
+      stream: true,
       system,
       messages: [{ role: 'user', content: user }],
     }),
@@ -87,15 +96,51 @@ async function callMiniMax(system: string, user: string, maxTokens = 2048): Prom
     throw new Error(`MiniMax ${res.status}: ${err.slice(0, 200)}`);
   }
 
-  let data: { content?: Array<{ type: string; text?: string }> };
-  try {
-    data = await res.json();
-  } catch {
-    throw new Error('Non-JSON from MiniMax: ' + (await res.text()).slice(0, 200));
-  }
+  if (!res.body) throw new Error('No response body');
 
-  const textBlocks = data.content?.filter((b) => b.type === 'text') ?? [];
-  return textBlocks.map((b) => b.text ?? '').join('\n');
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+    for (const line of lines) {
+      if (line.startsWith('data: ')) {
+        const data = line.slice(6);
+        if (data === '[DONE]') continue;
+        try {
+          const event = JSON.parse(data);
+          if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
+            callback(event.delta.text || '');
+          }
+        } catch { /* ignore parse errors */ }
+      }
+    }
+  }
+}
+
+async function uploadFileToMinimax(filename: string, mimeType: string, data: string): Promise<string> {
+  const binary = Buffer.from(data, 'base64');
+  const form = new FormData();
+  form.append('purpose', 't2a_async_input');
+  form.append('file', new Blob([binary], { type: mimeType }), filename);
+  console.log('[Minimax] Uploading file:', filename, mimeType, 'size:', binary.length);
+  const res = await fetch(MINIMAX_FILE_URL, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${MINIMAX_API_KEY}` },
+    body: form,
+  });
+  const errText = await res.text();
+  console.log('[Minimax] Upload response:', res.status, errText.slice(0, 300));
+  if (!res.ok) {
+    throw new Error(`File upload failed ${res.status}: ${errText.slice(0, 200)}`);
+  }
+  const result = JSON.parse(errText);
+  return result.file?.file_id;
 }
 
 // ─── System prompt ─────────────────────────────────────────────────────────────
@@ -120,7 +165,7 @@ function buildSystemPrompt(products: Product[], fields: Record<string, Record<st
     if (!prods.length) continue;
     lines.push(`\n### ${cat.replace(/_/g, ' ').toUpperCase()} (${prods.length} products)`);
     for (const p of prods.slice(0, 40)) {
-      lines.push(`- **${p['Product Name'] || 'Unnamed'}** (${p['Provider'] || 'N/A'}) | SA: ${p['Min. SA'] || 'Varies'} | Prem: ${p['Min. Premium'] || 'Varies'} | Entry: ${p['Min Entry Age'] && p['Max Entry Age'] ? p['Min Entry Age'] + '-' + p['Max Entry Age'] : 'Varies'} | Coverage: ${p['Coverage Term'] || 'Varies'} | ${p['Par / Non-Par'] || ''} ${p['IL / Non-IL'] || ''} | ${(p['Key Features'] || '').slice(0, 80)}`);
+      lines.push(`- **${p['Product Name'] || 'Unnamed'}** (${p['Provider'] || 'N/A'}) | SA: ${p['Min. SA'] || 'Varies'} | Prem: ${p['Min. Premium'] || 'Varies'} | Entry: ${p['Min Entry Age'] && p['Max Entry Age'] ? p['Min Entry Age'] + '-' + p['Max Entry Age'] : 'Varies'} | Coverage: ${p['Coverage Term'] || 'Varies'} | ${p['Par / Non-Par'] || ''} ${p['IL / Non-IL'] || ''} | ${String(p['Key Features'] || '').slice(0, 80)}`);
     }
     if (prods.length > 40) lines.push(`  ... and ${prods.length - 40} more ${cat} products`);
   }
@@ -164,8 +209,11 @@ Given a client's profile, you MUST:
 
 // ─── Build user prompt ─────────────────────────────────────────────────────────
 
-function buildUserPrompt(client: Record<string, unknown>, existingText: string, query?: string, historyContext?: string) {
+function buildUserPrompt(client: Record<string, unknown>, existingText: string, query?: string, historyContext?: string, attachments?: Attachment[]) {
   const querySection = query ? `\n\n## Current User Question\nThe advisor is asking: "${query}"\nAnswer this specific question based on the client profile and product catalog above.` : '';
+  const attachmentSection = attachments && attachments.length > 0
+    ? `\n\n## Attached Files\nThe user has attached ${attachments.length} file(s) for your analysis:\n${attachments.map((a, i) => `### File ${i + 1}: ${a.name} (${a.type}, ${a.size} bytes)\n\`\`\`\n${Buffer.from(a.data, 'base64').toString('utf-8').slice(0, 5000)}\n\`\`\``).join('\n\n')}`
+    : '';
   return `## Client Profile
 - Name: ${client.name || 'Client'}
 - Age: ${client.age} years old${historyContext || ''}
@@ -174,7 +222,7 @@ function buildUserPrompt(client: Record<string, unknown>, existingText: string, 
 - Monthly Budget: RM ${Number(client.monthlyBudget || 0).toLocaleString()}
 - Dependents: ${client.dependents || 0}
 - Goals: ${client.goals || 'Not specified'}
-- Existing Policies: ${existingText}${querySection}
+- Existing Policies: ${existingText}${querySection}${attachmentSection}
 
 Provide your AI-powered insurance recommendations`;
 }
@@ -215,9 +263,10 @@ export async function POST(req: NextRequest) {
       client: Record<string, unknown>;
       sessionId?: string;
       query?: string;
+      attachments?: Attachment[];
     };
 
-    const { client, query } = body;
+    const { client, query, attachments } = body;
     if (!client || !client.age || !client.income) {
       return NextResponse.json({ error: 'Missing age or income' }, { status: 400 });
     }
@@ -241,17 +290,57 @@ export async function POST(req: NextRequest) {
     //   if (sessionRows.rows && sessionRows.rows.length > 0) { ... }
     // } catch { /* ignore */ }
     const systemPrompt = buildSystemPrompt(catalog.products, catalog.fields);
+
     const userPrompt = buildUserPrompt(client, existingText, query, historyContext);
 
-    console.log('[recommend] SYSTEM PROMPT:\n', systemPrompt);
-    console.log('[recommend] USER PROMPT:\n', userPrompt);
+    let fullText = '';
 
-    let llmText = '';
     try {
-      llmText = await callMiniMax(systemPrompt, userPrompt, 2048);
-      console.log('[recommend] LLM RESPONSE:\n', llmText);
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream({
+        async start(controller) {
+          try {
+            if (attachments && attachments.length > 0) {
+              const fileIds: string[] = [];
+              for (const att of attachments) {
+                try {
+                  const fileId = await uploadFileToMinimax(att.name, att.type, att.data);
+                  if (fileId) fileIds.push(fileId);
+                } catch (e) { console.error('[Minimax] File upload error:', e); }
+              }
+              if (fileIds.length > 0) {
+                const fileRefText = `\n\n## Attached Files\nThe user has uploaded ${fileIds.length} file(s) for your analysis.\nFiles: ${fileIds.join(', ')}`;
+                await callMiniMaxStream(systemPrompt, userPrompt + fileRefText, (text) => {
+                  controller.enqueue(encoder.encode(text));
+                  fullText += text;
+                }, 2048);
+              } else {
+                await callMiniMaxStream(systemPrompt, userPrompt, (text) => {
+                  controller.enqueue(encoder.encode(text));
+                  fullText += text;
+                }, 2048);
+              }
+            } else {
+              await callMiniMaxStream(systemPrompt, userPrompt, (text) => {
+                controller.enqueue(encoder.encode(text));
+                fullText += text;
+              }, 2048);
+            }
+          } catch (e) {
+            controller.error(e);
+          } finally {
+            controller.close();
+          }
+        },
+      });
+
+      return new Response(stream, {
+        headers: {
+          'Content-Type': 'text/plain; charset=utf-8',
+          'X-Content-Type-Options': 'nosniff',
+        },
+      });
     } catch (llmErr) {
-      // Fallback: return catalog info for manual selection
       return NextResponse.json({
         success: false,
         error: (llmErr as Error).message,
@@ -268,20 +357,6 @@ export async function POST(req: NextRequest) {
         message: 'MiniMax unavailable. Showing catalog summary instead.',
       });
     }
-
-    // Return raw LLM response as plain text
-    const rawText = llmText.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
-
-    // Save session
-    const db = getDb();
-    const newSessionId = await saveSession(db, body.sessionId || null, client, { raw: rawText });
-
-    return NextResponse.json({
-      success: true,
-      sessionId: newSessionId,
-      client,
-      content: rawText,
-    });
   } catch (err) {
     console.error('[recommend] error:', err);
     return NextResponse.json({ success: false, error: (err as Error).message }, { status: 500 });

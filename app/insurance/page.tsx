@@ -7,7 +7,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
   Shield, ChevronLeft, ChevronRight, Loader2, CheckCircle, Send,
-  Heart, Stethoscope, Package, Menu
+  Heart, Stethoscope, Package, Menu, Paperclip, X
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { nanoid } from 'nanoid';
@@ -30,11 +30,20 @@ interface ClientData {
   investmentPreference: 'investment-linked' | 'non-investment-linked' | null;
 }
 
+type Attachment = {
+  id: string;
+  name: string;
+  type: string;
+  size: number;
+  data: string;
+};
+
 type Message = {
   id: string;
   role: 'user' | 'assistant';
   content?: string;
   type?: string;
+  attachments?: Attachment[];
 };
 
 // --- Helpers ---
@@ -406,6 +415,8 @@ export default function InsurancePreview() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Form state
   const [form, setForm] = useState<ClientData>({
@@ -444,66 +455,83 @@ export default function InsurancePreview() {
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
-  const sendMessage = useCallback(async (text: string) => {
-    if (!text.trim() || loading) return;
-    const userMsg: Message = { id: nanoid(), role: 'user', content: text };
+  const sendMessage = useCallback(async (text: string, attachedFiles?: Attachment[]) => {
+    if ((!text.trim() && (!attachedFiles || attachedFiles.length === 0)) || loading) return;
+    const files = attachedFiles || attachments;
+    const userMsg: Message = { id: nanoid(), role: 'user', content: text, attachments: files.length > 0 ? files : undefined };
     setMessages(prev => [...prev, userMsg]);
     setInput('');
+    setAttachments([]);
     setLoading(true);
+
+    const assistantMsg: Message = { id: nanoid(), role: 'assistant', content: '' };
+    setMessages(prev => [...prev, assistantMsg]);
 
     try {
       const client = buildClientForAPI(form);
       const res = await fetch('/api/insurance/recommend', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ client, query: text }),
+        body: JSON.stringify({ client, query: text, attachments: files }),
       });
-      const data = await res.json();
 
-      let content = '';
-      if (data.fallback) {
-        content = data.message || 'MiniMax unavailable. Showing catalog summary.';
-        if (data.catalogSummary) {
-          const cs = data.catalogSummary;
-          content += `\n\n📦 Products: ${cs.totalProducts} total\n• Life: ${cs.byCategory.life}\n• CI: ${cs.byCategory.critical_illness}\n• Medical: ${cs.byCategory.medical}\n• Savings: ${cs.byCategory.savings}`;
-        }
-      } else if (data.success !== false) {
-        content = (data.content as string) || '';
-        console.log(content)
-        // if (!content && data.analysis) {
-        //   const a = data.analysis as Record<string, unknown>;
-        //   if (a.summary) content += `**Summary:** ${a.summary}\n\n`;
-        //   if (a.gapAnalysis) content += `**Gap Analysis:** ${JSON.stringify(a.gapAnalysis)}\n\n`;
-        //   if (Array.isArray(a.recommendations) && a.recommendations.length > 0) {
-        //     content += `**Recommendations:**\n`;
-        //     a.recommendations.forEach((r: unknown, i: number) => {
-        //       const rec = r as Record<string, unknown>;
-        //       content += `${i + 1}. **${rec.productName || rec.name || 'Product'}**\n`;
-        //       if (rec.estimatedPremium) content += `   Premium: ${rec.estimatedPremium}\n`;
-        //       if (rec.reason) content += `   ${rec.reason}\n`;
-        //     });
-        //   }
-        // }
-      } else {
-        content = data.error || 'Something went wrong. Please try again.';
+      if (!res.ok) {
+        const err = await res.text();
+        setMessages(prev => prev.map(m => m.id === assistantMsg.id ? { ...m, content: `Error: ${err}` } : m));
+        return;
       }
 
-      const assistantMsg: Message = {
-        id: nanoid(),
-        role: 'assistant',
-        content,
-      };
-      setMessages(prev => [...prev, assistantMsg]);
+      const reader = res.body?.getReader();
+      const decoder = new TextDecoder();
+      if (!reader) throw new Error('No response body');
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const text = decoder.decode(value, { stream: true });
+        setMessages(prev => prev.map(m => m.id === assistantMsg.id ? { ...m, content: (m.content || '') + text } : m));
+      }
     } catch (err) {
       toast.error('Failed to get response');
+      setMessages(prev => prev.map(m => m.id === assistantMsg.id ? { ...m, content: 'Failed to get response. Please try again.' } : m));
     } finally {
       setLoading(false);
     }
-  }, [form, loading]);
+  }, [form, loading, attachments]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     sendMessage(input);
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    files.forEach(file => {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const data = ev.target?.result as string;
+        const base64 = data.split(',')[1] || btoa(data);
+        setAttachments(prev => [...prev, {
+          id: nanoid(),
+          name: file.name,
+          type: file.type,
+          size: file.size,
+          data: base64,
+        }]);
+      };
+      reader.readAsDataURL(file);
+    });
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const removeAttachment = (id: string) => {
+    setAttachments(prev => prev.filter(a => a.id !== id));
+  };
+
+  const formatFileSize = (bytes: number) => {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
   };
 
   return (
@@ -544,14 +572,28 @@ export default function InsurancePreview() {
           <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
             {messages.map(msg => (
               <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                {msg.role === 'assistant' ? (
+                  <div className="bg-white border border-gray-200 rounded-2xl px-4 py-3 shadow-sm max-w-[80%]">
+                    <div className="markdown-content">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content || ''}</ReactMarkdown>
                     </div>
-                    </div>
-                  ) : (
-                    <span className="whitespace-pre-line">{msg.content}</span>
-                  )}
-                </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-end gap-1 max-w-[80%]">
+                    {msg.attachments && msg.attachments.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {msg.attachments.map(att => (
+                          <div key={att.id} className="flex items-center gap-1 bg-gray-100 rounded-full px-2 py-1 text-xs text-gray-900">
+                            <Paperclip className="w-3 h-3" />
+                            <span className="max-w-[100px] truncate">{att.name}</span>
+                            <span className="text-gray-500">{formatFileSize(att.size)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <div className="bg-indigo-600 text-white rounded-2xl px-4 py-3 shadow-sm whitespace-pre-line">{msg.content || ''}</div>
+                  </div>
+                )}
               </div>
             ))}
             {loading && (
@@ -579,11 +621,25 @@ export default function InsurancePreview() {
 
           {/* Input */}
           <div className="border-t border-gray-200 bg-white p-3">
+            {attachments.length > 0 && (
+              <div className="flex flex-wrap gap-2 mb-2">
+                {attachments.map(att => (
+                  <div key={att.id} className="flex items-center gap-1 bg-indigo-50 border border-indigo-200 rounded-full px-2 py-1 text-xs text-indigo-700">
+                    <Paperclip className="w-3 h-3" />
+                    <span className="max-w-[100px] truncate">{att.name}</span>
+                    <span className="text-indigo-400">{formatFileSize(att.size)}</span>
+                    <button onClick={() => removeAttachment(att.id)} className="hover:text-indigo-900"><X className="w-3 h-3" /></button>
+                  </div>
+                ))}
+              </div>
+            )}
             <form onSubmit={handleSubmit} className="flex items-end gap-2">
+              <input type="file" ref={fileInputRef} onChange={handleFileChange} multiple className="hidden" accept="image/*,.pdf,.doc,.docx,.txt" />
+              <button type="button" onClick={() => fileInputRef.current?.click()} className="w-9 h-9 border border-gray-200 rounded-xl flex items-center justify-center text-gray-900 hover:bg-gray-50"><Paperclip className="w-4 h-4" /></button>
               <textarea value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(input); } }}
-                placeholder="Ask about coverage, compare products…"
+                placeholder="Ask about coverage, compare products, or attach a file…"
                 rows={1} className="flex-1 text-sm text-gray-900 border border-gray-200 rounded-xl px-3 py-2.5 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-300 placeholder:text-gray-900" />
-              <button type="submit" disabled={!input.trim() || loading}
+              <button type="submit" disabled={(!input.trim() && attachments.length === 0) || loading}
                 className="w-9 h-9 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 text-white rounded-xl flex items-center justify-center">
                 <Send className="w-4 h-4" />
               </button>
