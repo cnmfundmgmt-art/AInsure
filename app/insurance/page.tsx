@@ -3,6 +3,8 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import {
   Shield, ChevronLeft, ChevronRight, Loader2, CheckCircle, Send,
   Heart, Stethoscope, Package, Menu
@@ -99,12 +101,12 @@ function renderAssistantResponse(data: Record<string, unknown>, query: string) {
     lines.push('**Gap Analysis:**');
     for (const [category, amounts] of Object.entries(gap)) {
       const req = amounts.required || 0;
-      const cur = amounts.current || 0;
+      const cur = amounts.existing || amounts.current || 0;
       const g = amounts.gap || 0;
       if (g > 0) {
-        lines.push(`- **${category}**: You need ${fmt(req)} but have ${fmt(cur)}. Gap: ${fmt(g)}`);
+        lines.push(`- **${category}**: Need ${fmt(req)}, have ${fmt(cur)}. Gap: ${fmt(g)}`);
       } else {
-        lines.push(`- **${category}**: ✓ You have ${fmt(cur)}, meets need of ${fmt(req)}`);
+        lines.push(`- **${category}**: ✓ Have ${fmt(cur)}, meets need of ${fmt(req)}`);
       }
     }
     lines.push('');
@@ -118,10 +120,10 @@ function renderAssistantResponse(data: Record<string, unknown>, query: string) {
     recs.slice(0, 3).forEach((rec: Record<string, unknown>, i: number) => {
       const name = rec.productName || rec.name || 'Unknown';
       const prov = rec.provider || '';
-      const prem = rec.monthlyPremium ? fmt(rec.monthlyPremium as number) : 'N/A';
-      const note = rec.advisorNote || '';
-      lines.push(`${i + 1}. **${name}** (${prov}) - ${prem}/mo`);
-      if (note) lines.push(`   → ${note}`);
+      const prem = rec.estimatedPremium || rec.monthlyPremium || 'N/A';
+      const note = rec.reason || rec.advisorNote || '';
+      lines.push(`${i + 1}. **${name}** (${prov}) - ${prem}`);
+      if (note) lines.push(`   → ${String(note).slice(0, 150)}`);
     });
     lines.push('');
   }
@@ -279,7 +281,7 @@ function IntakeWizard({ form, updateForm, step, setStep, confirmed, setConfirmed
               <span className="text-gray-500">Monthly Budget</span>
               <span className="font-medium text-gray-900">{fmtBudget(form.monthlyBudget)}</span>
             </div>
-            <input type="range" min="100" max="30000" step="500" value={form.monthlyBudget}
+            <input type="range" min="100" max="5000" step="100" value={form.monthlyBudget}
               onChange={e => updateForm('monthlyBudget', parseInt(e.target.value))}
               className="w-full h-1.5 bg-gray-200 rounded appearance-none cursor-pointer accent-green-600" />
           </div>
@@ -440,7 +442,7 @@ function IntakeWizard({ form, updateForm, step, setStep, confirmed, setConfirmed
               <div className="p-3 bg-indigo-50 rounded-lg space-y-2">
                 <p className="text-xs font-semibold text-indigo-700">Protection Gaps</p>
                 {(() => {
-                  const lifeRequired = form.age < 45 ? form.intendSumAssured : form.intendSumAssured * 8;
+                  const lifeRequired = form.age > 55 ? form.annualIncome * 5 : form.annualIncome * 8;
                   const ciRequired = Math.max(form.annualIncome * 3, 150000);
                   const medicalRequired = form.monthlyBudget >= 800 ? 1000000 : form.monthlyBudget >= 500 ? 500000 : 200000;
                   const lifeGap = Math.max(0, lifeRequired - form.existingLifeCover);
@@ -560,27 +562,27 @@ export default function InsurancePreview() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ client, query: text }),
       });
-      const data = await res.json();
-
-      let content = '';
-      if (data.fallback) {
-        content = data.message || 'MiniMax unavailable. Showing catalog summary.';
-        if (data.catalogSummary) {
-          const cs = data.catalogSummary;
-          content += `\n\n📦 Products: ${cs.totalProducts} total\n• Life: ${cs.byCategory.life}\n• CI: ${cs.byCategory.critical_illness}\n• Medical: ${cs.byCategory.medical}\n• Savings: ${cs.byCategory.savings}`;
-        }
-      } else if (data.success !== false) {
-        content = renderAssistantResponse(data, text);
-      } else {
-        content = data.error || 'Something went wrong. Please try again.';
-      }
-
-      const assistantMsg: Message = {
-        id: nanoid(),
-        role: 'assistant',
-        content,
-      };
+      const assistantMsg: Message = { id: nanoid(), role: 'assistant', content: '' };
       setMessages(prev => [...prev, assistantMsg]);
+
+      const reader = res.body?.getReader();
+      const decoder = new TextDecoder();
+      if (reader) {
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            const chunk = decoder.decode(value, { stream: true });
+            assistantMsg.content += chunk;
+            setMessages(prev => prev.map(m => m.id === assistantMsg.id ? { ...m, content: assistantMsg.content } : m));
+          }
+        } finally {
+          reader.releaseLock();
+        }
+      } else {
+        assistantMsg.content = 'Failed to read response stream';
+        setMessages(prev => prev.map(m => m.id === assistantMsg.id ? { ...m, content: assistantMsg.content } : m));
+      }
     } catch (err) {
       toast.error('Failed to get response');
     } finally {
@@ -631,8 +633,8 @@ export default function InsurancePreview() {
           <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
             {messages.map(msg => (
               <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-xl ${msg.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-white border border-gray-200 text-gray-800'} rounded-2xl px-4 py-3 shadow-sm text-sm whitespace-pre-line`}>
-                  {msg.content}
+                <div className={`max-w-3xl markdown-content ${msg.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-white border border-gray-200 text-gray-900'} rounded-2xl px-4 py-3 shadow-sm text-sm`}>
+                  {msg.role === 'assistant' ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown> : msg.content}
                 </div>
               </div>
             ))}
@@ -664,7 +666,7 @@ export default function InsurancePreview() {
             <form onSubmit={handleSubmit} className="flex items-end gap-2">
               <textarea value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(input); } }}
                 placeholder="Ask about coverage, compare products…"
-                rows={1} className="flex-1 text-sm border border-gray-200 rounded-xl px-3 py-2.5 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-300 placeholder:text-gray-400" />
+                rows={1} className="flex-1 text-sm text-gray-900 border border-gray-200 rounded-xl px-3 py-2.5 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-300 placeholder:text-gray-900" />
               <button type="submit" disabled={!input.trim() || loading}
                 className="w-9 h-9 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 text-white rounded-xl flex items-center justify-center">
                 <Send className="w-4 h-4" />
