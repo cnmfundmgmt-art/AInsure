@@ -293,7 +293,7 @@ export async function POST(req: NextRequest) {
     // } catch { /* ignore */ }
     const systemPrompt = buildSystemPrompt(catalog.products, catalog.fields);
 
-    const userPrompt = buildUserPrompt(client, existingText, query, historyContext);
+    const userPrompt = buildUserPrompt(client, existingText, query, historyContext, attachments);
 
     let fullText = '';
 
@@ -302,32 +302,10 @@ export async function POST(req: NextRequest) {
       const stream = new ReadableStream({
         async start(controller) {
           try {
-            if (attachments && attachments.length > 0) {
-              const fileIds: string[] = [];
-              for (const att of attachments) {
-                try {
-                  const fileId = await uploadFileToMinimax(att.name, att.type, att.data);
-                  if (fileId) fileIds.push(fileId);
-                } catch (e) { console.error('[Minimax] File upload error:', e); }
-              }
-              if (fileIds.length > 0) {
-                const fileRefText = `\n\n## Attached Files\nThe user has uploaded ${fileIds.length} file(s) for your analysis.\nFiles: ${fileIds.join(', ')}`;
-                await callMiniMaxStream(systemPrompt, userPrompt + fileRefText, (text) => {
-                  controller.enqueue(encoder.encode(text));
-                  fullText += text;
-                }, 8192);
-              } else {
-                await callMiniMaxStream(systemPrompt, userPrompt, (text) => {
-                  controller.enqueue(encoder.encode(text));
-                  fullText += text;
-                }, 8192);
-              }
-            } else {
-              await callMiniMaxStream(systemPrompt, userPrompt, (text) => {
-                controller.enqueue(encoder.encode(text));
-                fullText += text;
-              }, 8192);
-            }
+            await callMiniMaxStream(systemPrompt, userPrompt, (text) => {
+              controller.enqueue(encoder.encode(text));
+              fullText += text;
+            }, 8192);
           } catch (e) {
             controller.error(e);
           } finally {
