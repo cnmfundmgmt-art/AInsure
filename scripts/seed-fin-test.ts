@@ -25,6 +25,7 @@ async function seed() {
   await db.insert(schema.clients).values({
     id: clientId,
     userId,
+    referenceId: 'REF' + nanoid(8).toUpperCase(),
     fullName: 'Financial Test User',
     createdAt: Math.floor(Date.now() / 1000),
   });

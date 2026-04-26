@@ -25,47 +25,5 @@ body {
     text-wrap: balance;
   }
 }
-.markdown-content table {
-  border-collapse: collapse;
-  width: 100%;
-  margin: 1rem 0;
-  font-size: 0.875rem;
-}
-.markdown-content th,
-.markdown-content td {
-  border: 1px solid #e5e7eb;
-  padding: 0.5rem 0.75rem;
-  text-align: left;
-  color: #171717;
-}
-.markdown-content th {
-  background-color: #f9fafb;
-  font-weight: 600;
-}
-.markdown-content tr:nth-child(even) {
-  background-color: #f9fafb;
-}
-.markdown-content hr {
-  border: none;
-  border-top: 1px solid #e5e7eb;
-  margin: 1.5rem 0;
-}
-.markdown-content h1,
-.markdown-content h2,
-.markdown-content h3 {
-  font-weight: 600;
-  margin-top: 1.25rem;
-  margin-bottom: 0.75rem;
-  color: #171717;
-}
-.markdown-content ul {
-  list-style-position: inside;
-  margin: 0.5rem 0;
-}
-.markdown-content li {
-  margin: 0.25rem 0;
-  color: #171717;
-}
-.markdown-content p {
-  color: #171717;
-}
+
+
