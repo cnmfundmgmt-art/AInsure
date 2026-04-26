@@ -72,7 +72,7 @@ function fmt(n: number | null | undefined) {
 
 // ─── MiniMax call ──────────────────────────────────────────────────────────────
 
-async function callMiniMaxStream(system: string, user: string, callback: (text: string) => void, maxTokens = 2048): Promise<void> {
+async function callMiniMaxStream(system: string, user: string, callback: (text: string) => void, maxTokens = 8192): Promise<void> {
   console.log('[MiniMax] Streaming...');
   const res = await fetch(`${MINIMAX_BASE_URL}/messages`, {
     method: 'POST',
@@ -315,18 +315,18 @@ export async function POST(req: NextRequest) {
                 await callMiniMaxStream(systemPrompt, userPrompt + fileRefText, (text) => {
                   controller.enqueue(encoder.encode(text));
                   fullText += text;
-                }, 2048);
+                }, 8192);
               } else {
                 await callMiniMaxStream(systemPrompt, userPrompt, (text) => {
                   controller.enqueue(encoder.encode(text));
                   fullText += text;
-                }, 2048);
+                }, 8192);
               }
             } else {
               await callMiniMaxStream(systemPrompt, userPrompt, (text) => {
                 controller.enqueue(encoder.encode(text));
                 fullText += text;
-              }, 2048);
+              }, 8192);
             }
           } catch (e) {
             controller.error(e);

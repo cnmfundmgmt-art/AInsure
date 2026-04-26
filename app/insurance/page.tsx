@@ -7,7 +7,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
   Shield, ChevronLeft, ChevronRight, Loader2, CheckCircle, Send,
-  Heart, Stethoscope, Package, Menu
+  Heart, Stethoscope, Package, Menu, Paperclip, X
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { nanoid } from 'nanoid';
@@ -36,6 +36,15 @@ type Message = {
   role: 'user' | 'assistant';
   content?: string;
   type?: string;
+  attachments?: Attachment[];
+};
+
+type Attachment = {
+  id: string;
+  name: string;
+  type: string;
+  size: number;
+  data: string;
 };
 
 // --- Helpers ---
@@ -509,7 +518,9 @@ export default function InsurancePreview() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   // Form state
   const [form, setForm] = useState<ClientData>({
     name: '',
@@ -534,6 +545,35 @@ export default function InsurancePreview() {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  function formatFileSize(bytes: number) {
+    if (bytes < 1024) return bytes + 'B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + 'K';
+    return (bytes / (1024 * 1024)).toFixed(1) + 'M';
+  }
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    files.forEach(file => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const base64 = (reader.result as string).split(',')[1];
+        setAttachments(prev => [...prev, {
+          id: nanoid(),
+          name: file.name,
+          type: file.type,
+          size: file.size,
+          data: base64,
+        }]);
+      };
+      reader.readAsDataURL(file);
+    });
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const removeAttachment = (id: string) => {
+    setAttachments(prev => prev.filter(a => a.id !== id));
+  };
+
   // Welcome message
   useEffect(() => {
     if (messages.length === 0) {
@@ -548,19 +588,21 @@ export default function InsurancePreview() {
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
-  const sendMessage = useCallback(async (text: string) => {
-    if (!text.trim() || loading) return;
-    const userMsg: Message = { id: nanoid(), role: 'user', content: text };
+  const sendMessage = useCallback(async (text: string, attachedFiles?: Attachment[]) => {
+    if (!text.trim() && (!attachedFiles || attachedFiles.length === 0) || loading) return;
+    const files = attachedFiles || attachments;
+    const userMsg: Message = { id: nanoid(), role: 'user', content: text, attachments: files.length > 0 ? files : undefined };
     setMessages(prev => [...prev, userMsg]);
     setInput('');
     setLoading(true);
+    setAttachments([]);
 
     try {
       const client = buildClientForAPI(form);
       const res = await fetch('/api/insurance/recommend', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ client, query: text }),
+        body: JSON.stringify({ client, query: text, attachments: files }),
       });
       const assistantMsg: Message = { id: nanoid(), role: 'assistant', content: '' };
       setMessages(prev => [...prev, assistantMsg]);
@@ -588,7 +630,7 @@ export default function InsurancePreview() {
     } finally {
       setLoading(false);
     }
-  }, [form, loading]);
+  }, [form, loading, attachments]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -663,11 +705,25 @@ export default function InsurancePreview() {
 
           {/* Input */}
           <div className="border-t border-gray-200 bg-white p-3">
+            {attachments.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {attachments.map(att => (
+                  <div key={att.id} className="flex items-center gap-1 bg-indigo-50 border border-indigo-200 rounded-full px-2 py-1 text-xs text-indigo-700">
+                    <Paperclip className="w-3 h-3" />
+                    <span className="max-w-[100px] truncate">{att.name}</span>
+                    <span className="text-indigo-400">{formatFileSize(att.size)}</span>
+                    <button onClick={() => removeAttachment(att.id)} className="hover:text-indigo-900"><X className="w-3 h-3" /></button>
+                  </div>
+                ))}
+              </div>
+            )}
             <form onSubmit={handleSubmit} className="flex items-end gap-2">
+              <input type="file" ref={fileInputRef} onChange={handleFileChange} multiple className="hidden" accept="image/*,.pdf,.doc,.docx,.txt" />
+              <button type="button" onClick={() => fileInputRef.current?.click()} className="w-9 h-9 border border-gray-200 rounded-xl flex items-center justify-center text-gray-900 hover:bg-gray-50"><Paperclip className="w-4 h-4" /></button>
               <textarea value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(input); } }}
-                placeholder="Ask about coverage, compare products…"
+                placeholder="Ask about coverage, compare products, or attach a file…"
                 rows={1} className="flex-1 text-sm text-gray-900 border border-gray-200 rounded-xl px-3 py-2.5 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-300 placeholder:text-gray-900" />
-              <button type="submit" disabled={!input.trim() || loading}
+              <button type="submit" disabled={(!input.trim() && attachments.length === 0) || loading}
                 className="w-9 h-9 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 text-white rounded-xl flex items-center justify-center">
                 <Send className="w-4 h-4" />
               </button>
