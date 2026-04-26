@@ -34,7 +34,7 @@ async function loadCatalog(): Promise<Product[]> {
   try {
     const fs = await import('fs');
     const path = await import('path');
-    const p = path.join(process.cwd(), 'data', 'products.json');
+    const p = path.join(process.cwd(), 'data', 'products (full).json');
     if (fs.existsSync(p)) {
       const raw = fs.readFileSync(p, 'utf-8');
       const data = JSON.parse(raw);
@@ -177,6 +177,7 @@ function buildUserPrompt(client: Record<string, unknown>, existingText: string, 
 - Annual Income: RM ${Number(client.income || 0).toLocaleString()}
 - Monthly Budget: RM ${Number(client.monthlyBudget || 0).toLocaleString()}
 - Dependents: ${client.dependents || 0}
+- Investment Preference: ${client.investmentPreference || 'Not specified'}
 - Goals: ${client.goals || 'Not specified'}
 - Existing Policies: ${existingText}${querySection}
 

@@ -13,6 +13,7 @@ import { nanoid } from 'nanoid';
 // --- Types ---
 
 interface ClientData {
+  name: string;
   age: number;
   gender: 'male' | 'female';
   annualIncome: number;
@@ -59,7 +60,7 @@ const SUGGESTIONS = [
 
 function buildClientForAPI(form: ClientData) {
   return {
-    name: '',
+    name: form.name,
     age: form.age,
     gender: form.gender,
     income: form.annualIncome,
@@ -69,6 +70,7 @@ function buildClientForAPI(form: ClientData) {
     smoker: form.smoker,
     coverageTerm: form.coverageTerm,
     intendSumAssured: form.intendSumAssured,
+    investmentPreference: form.investmentPreference || 'not specified',
     existingPolicies: [
       form.existingLifeCover > 0 ? { policyType: 'Life', sumAssured: form.existingLifeCover, premium: 0 } : null,
       form.existingCICover > 0 ? { policyType: 'CI', sumAssured: form.existingCICover, premium: 0 } : null,
@@ -209,9 +211,17 @@ function IntakeWizard({ form, updateForm, step, setStep, confirmed, setConfirmed
 
       {/* Step 1: About You */}
       {step === 1 && (
-        <div className="space-y-4">
+<div className="space-y-4">
           <h3 className="text-sm font-semibold text-gray-800">About You</h3>
-          
+
+          {/* Name */}
+          <div>
+            <span className="text-gray-900 block mb-1 text-xs">Name (Optional)</span>
+            <input type="text" value={form.name} onChange={e => updateForm('name', e.target.value)}
+              placeholder="Enter client name"
+              className="w-full px-2 py-1.5 text-xs border border-gray-200 rounded text-gray-900 placeholder:text-gray-900" />
+          </div>
+
           {/* Age */}
           <div>
             <div className="flex justify-between text-xs mb-1">
@@ -219,7 +229,12 @@ function IntakeWizard({ form, updateForm, step, setStep, confirmed, setConfirmed
               <span className="font-medium text-gray-900">{form.age}</span>
             </div>
             <input type="range" min="18" max="70" value={form.age}
-              onChange={e => updateForm('age', parseInt(e.target.value))}
+              onChange={e => {
+                const newAge = parseInt(e.target.value);
+                const maxTerm = Math.min(50, 100 - newAge);
+                updateForm('age', newAge);
+                if (form.coverageTerm > maxTerm) updateForm('coverageTerm', maxTerm);
+              }}
               className="w-full h-1.5 bg-gray-200 rounded appearance-none cursor-pointer accent-indigo-600" />
           </div>
 
@@ -244,7 +259,7 @@ function IntakeWizard({ form, updateForm, step, setStep, confirmed, setConfirmed
               <span className="text-gray-500">Annual Income</span>
               <span className="font-medium text-gray-900">{fmt(form.annualIncome)}</span>
             </div>
-            <input type="range" min="24000" max="300000" step="6000" value={form.annualIncome}
+            <input type="range" min="24000" max="1000000" step="24000" value={form.annualIncome}
               onChange={e => updateForm('annualIncome', parseInt(e.target.value))}
               className="w-full h-1.5 bg-gray-200 rounded appearance-none cursor-pointer accent-green-600" />
           </div>
@@ -264,7 +279,7 @@ function IntakeWizard({ form, updateForm, step, setStep, confirmed, setConfirmed
               <span className="text-gray-500">Monthly Budget</span>
               <span className="font-medium text-gray-900">{fmtBudget(form.monthlyBudget)}</span>
             </div>
-            <input type="range" min="100" max="3000" step="50" value={form.monthlyBudget}
+            <input type="range" min="100" max="30000" step="500" value={form.monthlyBudget}
               onChange={e => updateForm('monthlyBudget', parseInt(e.target.value))}
               className="w-full h-1.5 bg-gray-200 rounded appearance-none cursor-pointer accent-green-600" />
           </div>
@@ -275,9 +290,19 @@ function IntakeWizard({ form, updateForm, step, setStep, confirmed, setConfirmed
               <span className="text-gray-500">Coverage Term</span>
               <span className="font-medium text-gray-900">{form.coverageTerm} yrs</span>
             </div>
-            <input type="range" min="5" max="30" step="5" value={form.coverageTerm}
-              onChange={e => updateForm('coverageTerm', parseInt(e.target.value))}
+            <input type="range" min="5" max="50" step="5" value={form.coverageTerm}
+              onChange={e => {
+                const val = parseInt(e.target.value);
+                const maxTerm = Math.min(50, 100 - form.age);
+                updateForm('coverageTerm', Math.min(val, maxTerm));
+              }}
               className="w-full h-1.5 bg-gray-200 rounded appearance-none cursor-pointer accent-indigo-600" />
+            <div className="flex justify-between text-xs mt-1">
+              <span className="text-gray-500">Age + Term = {form.age + form.coverageTerm}</span>
+              {form.age + form.coverageTerm > 100 && (
+                <span className="text-rose-500 font-medium">Max 100</span>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -298,6 +323,10 @@ function IntakeWizard({ form, updateForm, step, setStep, confirmed, setConfirmed
               <option value={300000}>RM300,000</option>
               <option value={500000}>RM500,000</option>
               <option value={1000000}>RM1,000,000</option>
+              <option value={2000000}>RM2,000,000</option>
+              <option value={3000000}>RM3,000,000</option>
+              <option value={5000000}>RM5,000,000</option>
+              <option value={10000000}>RM10,000,000</option>
             </select>
           </div>
 
@@ -328,6 +357,11 @@ function IntakeWizard({ form, updateForm, step, setStep, confirmed, setConfirmed
                   <option value={100000}>RM100k</option>
                   <option value={200000}>RM200k</option>
                   <option value={500000}>RM500k</option>
+                  <option value={1000000}>RM1M</option>
+                  <option value={2000000}>RM2M</option>
+                  <option value={3000000}>RM3M</option>
+                  <option value={5000000}>RM5M</option>
+                  <option value={10000000}>RM10M</option>
                 </select>
               </div>
               <div className="flex items-center gap-2">
@@ -339,6 +373,12 @@ function IntakeWizard({ form, updateForm, step, setStep, confirmed, setConfirmed
                   <option value={50000}>RM50k</option>
                   <option value={100000}>RM100k</option>
                   <option value={200000}>RM200k</option>
+                  <option value={500000}>RM500k</option>
+                  <option value={1000000}>RM1M</option>
+                  <option value={2000000}>RM2M</option>
+                  <option value={3000000}>RM3M</option>
+                  <option value={5000000}>RM5M</option>
+                  <option value={10000000}>RM10M</option>
                 </select>
               </div>
               <div className="flex items-center gap-2">
@@ -350,7 +390,12 @@ function IntakeWizard({ form, updateForm, step, setStep, confirmed, setConfirmed
                   <option value={50000}>RM50k</option>
                   <option value={100000}>RM100k</option>
                   <option value={200000}>RM200k</option>
+                  <option value={500000}>RM500k</option>
                   <option value={1000000}>RM1M</option>
+                  <option value={2000000}>RM2M</option>
+                  <option value={3000000}>RM3M</option>
+                  <option value={5000000}>RM5M</option>
+                  <option value={10000000}>RM10M</option>
                 </select>
               </div>
             </div>
@@ -362,10 +407,7 @@ function IntakeWizard({ form, updateForm, step, setStep, confirmed, setConfirmed
       {step === 3 && (
         <div className="space-y-4">
           <h3 className="text-sm font-semibold text-gray-800">Preferences</h3>
-          
-          <p className="text-xs text-gray-500">Investment-linked or traditional?</p>
-          
-          <div className="grid grid-cols-2 gap-2">
+<div className="grid grid-cols-2 gap-2">
             <button onClick={() => updateForm('investmentPreference', 'investment-linked')}
               className={`p-2 rounded-lg border-2 transition ${form.investmentPreference === 'investment-linked' ? 'border-emerald-500 bg-emerald-50' : 'border-gray-200 hover:border-gray-300'}`}>
               <div className="text-lg mb-1">📈</div>
@@ -380,10 +422,11 @@ function IntakeWizard({ form, updateForm, step, setStep, confirmed, setConfirmed
 
           {/* Summary */}
           {confirmed && (
-            <div className="space-y-3">
+<div className="space-y-3">
               <div className="p-3 bg-green-50 rounded-lg space-y-1">
                 <p className="text-xs font-semibold text-green-700">✓ Confirmed</p>
-                <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-xs">
+                <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-xs text-gray-900">
+                  {form.name && <div><span className="text-gray-900">Name:</span> {form.name}</div>}
                   <div><span className="text-gray-900">Age:</span> {form.age}</div>
                   <div><span className="text-gray-900">Gender:</span> {form.gender}</div>
                   <div><span className="text-gray-900">Income:</span> {fmt(form.annualIncome)}/yr</div>
@@ -467,6 +510,7 @@ export default function InsurancePreview() {
   
   // Form state
   const [form, setForm] = useState<ClientData>({
+    name: '',
     age: 30,
     gender: 'male',
     annualIncome: 60000,
