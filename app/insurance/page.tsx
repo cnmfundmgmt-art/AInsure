@@ -7,12 +7,23 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
   Shield, ChevronLeft, ChevronRight, Loader2, CheckCircle, Send,
-  Heart, Stethoscope, Package, Menu, Paperclip, X
+  Heart, Stethoscope, Package, Menu, Paperclip, X, User
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { nanoid } from 'nanoid';
 
 // --- Types ---
+
+interface AdvisorClient {
+  id: string;
+  clientNumber: string;
+  firstName: string;
+  lastName: string;
+  gender: string | null;
+  email: string | null;
+  phone: string | null;
+  dateOfBirth: string | null;
+}
 
 interface ClientData {
   name: string;
@@ -513,7 +524,10 @@ export default function InsurancePreview() {
   const [confirmed, setConfirmed] = useState(false);
   const [showLeft, setShowLeft] = useState(true);
   const [showRight, setShowRight] = useState(false);
-  
+  const [selectedClientId, setSelectedClientId] = useState<string>('');
+  const [clients, setClients] = useState<AdvisorClient[]>([]);
+  const [role, setRole] = useState<string | null>(null);
+
   // Chat state
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -538,6 +552,63 @@ export default function InsurancePreview() {
     existingEndowmentCover: 0,
     investmentPreference: null,
   });
+
+  // Fetch role and clients on mount
+  useEffect(() => {
+    fetch('/api/client/me')
+      .then(r => r.json())
+      .then(d => setRole(d.role || null))
+      .catch(() => setRole(null));
+
+    fetch('/api/clients')
+      .then(r => r.json())
+      .then(data => {
+        if (Array.isArray(data)) setClients(data);
+      })
+      .catch(() => {});
+  }, []);
+
+  // Load financial snapshot when client selected
+  useEffect(() => {
+    if (!selectedClientId) return;
+
+    fetch(`/api/clients/${selectedClientId}/financials`)
+      .then(r => r.json())
+      .then(d => {
+        const snap = d.snapshots?.[0];
+        if (!snap) return;
+
+        const client = clients.find(c => c.id === selectedClientId);
+        const fullName = client ? `${client.firstName} ${client.lastName}`.trim() : '';
+
+        // Compute age from dateOfBirth if available
+        let age = 30;
+        if (client?.dateOfBirth) {
+          const dob = new Date(client.dateOfBirth);
+          const today = new Date();
+          age = Math.floor((today.getTime() - dob.getTime()) / (365.25 * 24 * 60 * 60 * 1000));
+          if (age < 18) age = 18;
+          if (age > 70) age = 70;
+        }
+
+        const genderMap: Record<string, 'male' | 'female'> = {
+          'Male': 'male', 'male': 'male',
+          'Female': 'female', 'female': 'female',
+        };
+
+        setForm(prev => ({
+          ...prev,
+          name: fullName || prev.name,
+          age: age,
+          gender: (client?.gender && genderMap[client.gender]) ? genderMap[client.gender] : prev.gender,
+          annualIncome: snap.monthlyIncome ? snap.monthlyIncome * 12 : prev.annualIncome,
+          monthlyBudget: prev.monthlyBudget,
+        }));
+        setStep(1);
+        setConfirmed(false);
+      })
+      .catch(() => {});
+  }, [selectedClientId, clients]);
 
   const updateForm = (field: keyof ClientData, value: number | boolean | string) => {
     setForm(prev => ({ ...prev, [field]: value }));
@@ -660,6 +731,23 @@ export default function InsurancePreview() {
       <div className="flex flex-1 overflow-hidden">
         {/* Left sidebar */}
         <div className={`w-72 bg-white border-r border-gray-200 flex-shrink-0 overflow-y-auto p-4 ${showLeft ? 'block' : 'hidden lg:block'}`}>
+          {role === 'advisor' && (
+            <div className="mb-4">
+              <label className="block text-xs text-gray-500 uppercase mb-1 font-semibold">Select Client</label>
+              <select
+                value={selectedClientId}
+                onChange={e => setSelectedClientId(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-300"
+              >
+                <option value="">— New client —</option>
+                {clients.map(c => (
+                  <option key={c.id} value={c.id}>
+                    {c.firstName} {c.lastName}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <IntakeWizard 
             form={form} 
             updateForm={updateForm} 

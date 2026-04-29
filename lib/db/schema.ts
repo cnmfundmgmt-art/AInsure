@@ -68,6 +68,74 @@ export const clients = sqliteTable('clients', {
   createdAt: integer('created_at').notNull(),
 });
 
+// ─── ADVISOR CLIENTS (Separate from KYC clients) ─────────────────────────────
+
+export const advisorClients = sqliteTable('advisor_clients', {
+  id: text('id').primaryKey(),
+  advisorId: text('advisor_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  clientNumber: text('client_number').notNull().unique(),  // e.g. CFP-2026-A1B2
+  firstName: text('first_name').notNull(),
+  lastName: text('last_name').notNull(),
+  gender: text('gender'),                         // Male | Female
+  email: text('email'),
+  phone: text('phone'),
+  dateOfBirth: text('date_of_birth'),
+  nricPassport: text('nric_passport'),           // encrypted
+  addressStreet: text('address_street'),
+  addressCity: text('address_city'),
+  addressPostcode: text('address_postcode'),
+  addressState: text('address_state'),
+  preferredLanguage: text('preferred_language').default('EN'),  // EN | MS | ZH
+  notes: text('notes'),
+  deletedAt: integer('deleted_at'),               // soft delete
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+});
+
+// ─── ADVISOR CLIENT FINANCIAL DATA ─────────────────────────────────────────
+
+export const advisorClientSnapshots = sqliteTable('advisor_client_snapshots', {
+  id: text('id').primaryKey(),
+  advisorClientId: text('advisor_client_id').notNull().references(() => advisorClients.id, { onDelete: 'cascade' }),
+  monthlyIncome: real('monthly_income'),
+  monthlyExpenses: real('monthly_expenses'),
+  emergencyFund: real('emergency_fund'),
+  snapshotDate: integer('snapshot_date').notNull(),
+});
+
+export const advisorClientAssets = sqliteTable('advisor_client_assets', {
+  id: text('id').primaryKey(),
+  advisorClientId: text('advisor_client_id').notNull().references(() => advisorClients.id, { onDelete: 'cascade' }),
+  assetType: text('asset_type').notNull(),
+  name: text('name').notNull(),
+  value: real('value').notNull(),
+  createdAt: integer('created_at').notNull(),
+});
+
+export const advisorClientLiabilities = sqliteTable('advisor_client_liabilities', {
+  id: text('id').primaryKey(),
+  advisorClientId: text('advisor_client_id').notNull().references(() => advisorClients.id, { onDelete: 'cascade' }),
+  liabilityType: text('liability_type').notNull(),
+  name: text('name').notNull(),
+  amount: real('amount').notNull(),
+  interestRate: real('interest_rate'),
+  createdAt: integer('created_at').notNull(),
+});
+
+export const advisorClientGoals = sqliteTable('advisor_client_goals', {
+  id: text('id').primaryKey(),
+  advisorClientId: text('advisor_client_id').notNull().references(() => advisorClients.id, { onDelete: 'cascade' }),
+  goalType: text('goal_type').notNull(),  // retirement | education | emergency | property | wealth_growth | other
+  goalName: text('goal_name').notNull(),
+  targetAmount: real('target_amount').notNull(),
+  currentAmount: real('current_amount').default(0),
+  targetYear: integer('target_year'),
+  priority: integer('priority').default(1),
+  notes: text('notes'),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+});
+
 // ─── ID DOCUMENTS (KYC) ───────────────────────────────────────────────────────
 
 export const idDocuments = sqliteTable('id_documents', {
@@ -247,6 +315,37 @@ export const insuranceProducts = sqliteTable('insurance_products', {
   productSummary: text('product_summary'),
 });
 
+// ─── INSURANCE ANALYSIS SESSIONS ─────────────────────────────────────────────
+
+export const insuranceAnalysisSessions = sqliteTable('insurance_analysis_sessions', {
+  id: text('id').primaryKey(),
+  advisorId: text('advisor_id').notNull(),
+  clientName: text('client_name'),
+  clientIC: text('client_ic'),
+  annualIncome: real('annual_income'),
+  monthlyBudget: real('monthly_budget'),
+  analysisData: text('analysis_data'),
+  createdAt: integer('created_at').notNull(),
+});
+
+// ─── CLIENT POLICIES ─────────────────────────────────────────────────────────
+
+export const clientPolicies = sqliteTable('client_policies', {
+  id: text('id').primaryKey(),
+  clientId: text('client_id').notNull().references(() => clients.id, { onDelete: 'cascade' }),
+  provider: text('provider'),
+  policyName: text('policy_name'),
+  policyType: text('policy_type'),
+  annualPremium: real('annual_premium'),
+  sumAssured: real('sum_assured'),
+  ciCover: real('ci_cover'),
+  medicalCover: real('medical_cover'),
+  lifeCover: real('life_cover'),
+  policyStartDate: text('policy_start_date'),
+  status: text('status').default('active'),
+  createdAt: integer('created_at').notNull(),
+});
+
 // ─── COMPARISONS ─────────────────────────────────────────────────────────────
 
 export const productComparisons = sqliteTable('product_comparisons', {
@@ -329,6 +428,13 @@ export const categoryRules = sqliteTable('category_rules', {
 
 export type User = typeof users.$inferSelect;
 export type Client = typeof clients.$inferSelect;
+export type AdvisorClient = typeof advisorClients.$inferSelect;
+export type AdvisorClientSnapshot = typeof advisorClientSnapshots.$inferSelect;
+export type AdvisorClientAsset = typeof advisorClientAssets.$inferSelect;
+export type AdvisorClientLiability = typeof advisorClientLiabilities.$inferSelect;
+export type AdvisorClientGoal = typeof advisorClientGoals.$inferSelect;
+export type InsuranceAnalysisSession = typeof insuranceAnalysisSessions.$inferSelect;
+export type ClientPolicy = typeof clientPolicies.$inferSelect;
 export type IdDocument = typeof idDocuments.$inferSelect;
 export type FaceVerification = typeof faceVerifications.$inferSelect;
 export type FinancialSnapshot = typeof financialSnapshots.$inferSelect;

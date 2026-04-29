@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   PieChart,
@@ -17,27 +17,37 @@ import {
 
 const API = process.env.NEXT_PUBLIC_API_URL || "";
 
+type AdvisorClient = {
+  id: string;
+  clientNumber: string;
+  firstName: string;
+  lastName: string;
+  gender: string | null;
+  email: string | null;
+  phone: string | null;
+};
+
 type Asset = {
   id: string;
-  asset_type: string;
+  assetType: string;
   name: string;
   value: number;
-  created_at: string;
+  createdAt: number;
 };
 type Liability = {
   id: string;
-  liability_type: string;
+  liabilityType: string;
   name: string;
   amount: number;
-  interest_rate: number | null;
-  created_at: string;
+  interestRate: number | null;
+  createdAt: number;
 };
 type Snapshot = {
   id: string;
-  monthly_income: number;
-  monthly_expenses: number;
-  emergency_fund: number | null;
-  created_at: string;
+  monthlyIncome: number | null;
+  monthlyExpenses: number | null;
+  emergencyFund: number | null;
+  snapshotDate: number;
 };
 type Profile = {
   total_assets: number;
@@ -86,30 +96,67 @@ function fmt(n: number) {
   }).format(n);
 }
 
-function SnapshotForm() {
+function ClientSelector({ selected, clients, onChange }: {
+  selected: string;
+  clients: AdvisorClient[];
+  onChange: (id: string) => void;
+}) {
+  return (
+    <div className="mb-4">
+      <label className="block text-xs text-gray-500 uppercase mb-1">Select Client</label>
+      <select
+        value={selected}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full md:w-64 px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-black bg-white"
+      >
+        <option value="">-- Select a client --</option>
+        {clients.map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.firstName} {c.lastName} ({c.clientNumber})
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+function SnapshotForm({ clientId }: { clientId: string }) {
   const qc = useQueryClient();
   const [income, setIncome] = useState("");
   const [expenses, setExpenses] = useState("");
   const [emergency, setEmergency] = useState("");
   const { data: latest } = useQuery<Snapshot>({
-    queryKey: ["snap"],
+    queryKey: ["snap", clientId],
     queryFn: () =>
-      fetch(API + "/api/financial/snapshot?latest=true").then((r) => r.json()),
+      fetch(API + `/api/clients/${clientId}/financials`).then((r) => r.json()).then(d => d.snapshots?.[0] || null),
+    enabled: !!clientId,
   });
+
+  useEffect(() => {
+    if (latest) {
+      setIncome(latest.monthlyIncome ? String(latest.monthlyIncome) : "");
+      setExpenses(latest.monthlyExpenses ? String(latest.monthlyExpenses) : "");
+      setEmergency(latest.emergencyFund ? String(latest.emergencyFund) : "");
+    } else {
+      setIncome("");
+      setExpenses("");
+      setEmergency("");
+    }
+  }, [latest, clientId]);
   const save = useMutation({
     mutationFn: (b: {
       monthly_income: number;
       monthly_expenses: number;
       emergency_fund?: number;
     }) =>
-      fetch(API + "/api/financial/snapshot", {
+      fetch(API + `/api/clients/${clientId}/financials`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(b),
       }).then((r) => r.json()),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["snap"] });
-      qc.invalidateQueries({ queryKey: ["profile"] });
+      qc.invalidateQueries({ queryKey: ["snap", clientId] });
+      qc.invalidateQueries({ queryKey: ["profile", clientId] });
     },
   });
   const surplus = parseFloat(income) || 0 - (parseFloat(expenses) || 0);
@@ -119,11 +166,13 @@ function SnapshotForm() {
       {latest && (
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-800">
           Last:{" "}
-          {new Date(latest.created_at).toLocaleDateString("en-MY") +
+          {latest.snapshotDate
+            ? new Date(Number(latest.snapshotDate) * 1000).toLocaleDateString("en-MY")
+            : 'No date' +
             " - " +
-            fmt(Number(latest.monthly_income)) +
+            fmt(Number(latest.monthlyIncome)) +
             " / " +
-            fmt(Number(latest.monthly_expenses))}
+            fmt(Number(latest.monthlyExpenses))}
         </div>
       )}
       <form
@@ -211,7 +260,7 @@ function SnapshotForm() {
   );
 }
 
-function AssetsTab() {
+function AssetsTab({ clientId }: { clientId: string }) {
   const qc = useQueryClient();
   const [show, setShow] = useState(false);
   const [name, setName] = useState("");
@@ -219,20 +268,21 @@ function AssetsTab() {
   const [val, setVal] = useState("");
   const [delId, setDelId] = useState<string | null>(null);
   const { data: assets = [], isLoading } = useQuery<Asset[]>({
-    queryKey: ["assets"],
+    queryKey: ["assets", clientId],
     queryFn: () =>
-      fetch(API + "/api/financial/assets").then((r) => r.json()),
+      fetch(API + `/api/clients/${clientId}/financials`).then((r) => r.json()).then(d => d.assets || []),
+    enabled: !!clientId,
   });
   const add = useMutation({
-    mutationFn: (b: { asset_type: string; name: string; value: number }) =>
-      fetch(API + "/api/financial/assets", {
+    mutationFn: (b: { assetType: string; name: string; value: number }) =>
+      fetch(API + `/api/clients/${clientId}/assets`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(b),
       }).then((r) => r.json()),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["assets"] });
-      qc.invalidateQueries({ queryKey: ["profile"] });
+      qc.invalidateQueries({ queryKey: ["assets", clientId] });
+      qc.invalidateQueries({ queryKey: ["profile", clientId] });
       setShow(false);
       setName("");
       setVal("");
@@ -240,12 +290,12 @@ function AssetsTab() {
   });
   const del = useMutation({
     mutationFn: (id: string) =>
-      fetch(API + "/api/financial/assets?id=" + id, {
+      fetch(API + `/api/clients/${clientId}/financials/assets?id=` + id, {
         method: "DELETE",
       }).then((r) => r.json()),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["assets"] });
-      qc.invalidateQueries({ queryKey: ["profile"] });
+      qc.invalidateQueries({ queryKey: ["assets", clientId] });
+      qc.invalidateQueries({ queryKey: ["profile", clientId] });
       setDelId(null);
     },
   });
@@ -280,7 +330,7 @@ function AssetsTab() {
               <div>
                 <div className="text-black font-medium text-sm">{a.name}</div>
                 <div className="text-xs text-gray-500">
-                  {ASSET_LABELS[a.asset_type] || a.asset_type}
+                  {ASSET_LABELS[a.assetType] || a.assetType}
                 </div>
                 <div className="text-green-600 font-mono text-sm mt-1">
                   {fmt(Number(a.value))}
@@ -301,7 +351,7 @@ function AssetsTab() {
           <div className="bg-white border border-gray-200 rounded-xl p-6 max-w-sm w-full mx-4">
             <h3 className="text-black font-semibold mb-2">Delete Asset?</h3>
             <p className="text-gray-600 text-sm mb-4">Cannot be undone.</p>
-            <div className="flex gap-3">
+            <div class="flex gap-3">
               <button
                 onClick={() => setDelId(null)}
                 className="flex-1 bg-gray-100 hover:bg-gray-200 text-black rounded-lg py-2 text-sm"
@@ -376,7 +426,7 @@ function AssetsTab() {
               </button>
               <button
                 onClick={() =>
-                  add.mutate({ asset_type: atype, name, value: parseFloat(val) })
+                  add.mutate({ assetType: atype, name, value: parseFloat(val) })
                 }
                 disabled={add.isPending}
                 className="flex-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded-lg py-2.5 text-sm"
@@ -391,7 +441,7 @@ function AssetsTab() {
   );
 }
 
-function LiabilitiesTab() {
+function LiabilitiesTab({ clientId }: { clientId: string }) {
   const qc = useQueryClient();
   const [show, setShow] = useState(false);
   const [name, setName] = useState("");
@@ -400,25 +450,26 @@ function LiabilitiesTab() {
   const [rate, setRate] = useState("");
   const [delId, setDelId] = useState<string | null>(null);
   const { data: liabs = [], isLoading } = useQuery<Liability[]>({
-    queryKey: ["liabs"],
+    queryKey: ["liabs", clientId],
     queryFn: () =>
-      fetch(API + "/api/financial/liabilities").then((r) => r.json()),
+      fetch(API + `/api/clients/${clientId}/financials`).then((r) => r.json()).then(d => d.liabilities || []),
+    enabled: !!clientId,
   });
   const add = useMutation({
     mutationFn: (b: {
-      liability_type: string;
+      liabilityType: string;
       name: string;
       amount: number;
-      interest_rate?: number;
+      interestRate?: number;
     }) =>
-      fetch(API + "/api/financial/liabilities", {
+      fetch(API + `/api/clients/${clientId}/financials/liabilities`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(b),
       }).then((r) => r.json()),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["liabs"] });
-      qc.invalidateQueries({ queryKey: ["profile"] });
+      qc.invalidateQueries({ queryKey: ["liabs", clientId] });
+      qc.invalidateQueries({ queryKey: ["profile", clientId] });
       setShow(false);
       setName("");
       setAmt("");
@@ -427,12 +478,12 @@ function LiabilitiesTab() {
   });
   const del = useMutation({
     mutationFn: (id: string) =>
-      fetch(API + "/api/financial/liabilities?id=" + id, {
+      fetch(API + `/api/clients/${clientId}/financials/liabilities?id=` + id, {
         method: "DELETE",
       }).then((r) => r.json()),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["liabs"] });
-      qc.invalidateQueries({ queryKey: ["profile"] });
+      qc.invalidateQueries({ queryKey: ["liabs", clientId] });
+      qc.invalidateQueries({ queryKey: ["profile", clientId] });
       setDelId(null);
     },
   });
@@ -477,14 +528,14 @@ function LiabilitiesTab() {
               <div>
                 <div className="text-black font-medium text-sm">{l.name}</div>
                 <div className="text-xs text-gray-500">
-                  {LIAB_LABELS[l.liability_type] || l.liability_type}
+                  {LIAB_LABELS[l.liabilityType] || l.liabilityType}
                 </div>
                 <div className="text-red-600 font-mono text-sm mt-1">
                   {fmt(Number(l.amount))}
                 </div>
-                {l.interest_rate && (
+                {l.interestRate && (
                   <div className="text-xs text-gray-500">
-                    {l.interest_rate}% p.a. - est. {fmt(estMo(Number(l.amount), l.interest_rate))}
+                    {l.interestRate}% p.a. - est. {fmt(estMo(Number(l.amount), l.interestRate))}
                     /mo
                   </div>
                 )}
@@ -506,7 +557,7 @@ function LiabilitiesTab() {
               Delete Liability?
             </h3>
             <p className="text-gray-600 text-sm mb-4">Cannot be undone.</p>
-            <div className="flex gap-3">
+            <div class="flex gap-3">
               <button
                 onClick={() => setDelId(null)}
                 className="flex-1 bg-gray-100 hover:bg-gray-200 text-black rounded-lg py-2 text-sm"
@@ -597,10 +648,10 @@ function LiabilitiesTab() {
               <button
                 onClick={() =>
                   add.mutate({
-                    liability_type: ltype,
+                    liabilityType: ltype,
                     name,
                     amount: parseFloat(amt),
-                    ...(rate ? { interest_rate: parseFloat(rate) } : {}),
+                    ...(rate ? { interestRate: parseFloat(rate) } : {}),
                   })
                 }
                 disabled={add.isPending}
@@ -616,35 +667,41 @@ function LiabilitiesTab() {
   );
 }
 
-function SummaryTab() {
-  const { data: p, isLoading } = useQuery<Profile>({
-    queryKey: ["profile"],
-    queryFn: () =>
-      fetch(API + "/api/financial/profile").then((r) => r.json()),
+function SummaryTab({ clientId }: { clientId: string }) {
+  const { data, isLoading } = useQuery<{ snapshots: Snapshot[]; assets: Asset[]; liabilities: Liability[] }>({
+    queryKey: ["profile", clientId],
+    queryFn: () => fetch(API + `/api/clients/${clientId}/financials`).then((r) => r.json()),
+    enabled: !!clientId,
     refetchOnWindowFocus: false,
   });
+
   if (isLoading) return <p className="text-gray-500">Loading...</p>;
-  if (!p)
+  if (!data || (!data.snapshots?.length && !data.assets?.length && !data.liabilities?.length)) {
     return (
       <p className="text-gray-500 text-sm">
         Add income, assets and liabilities to see your summary.
       </p>
     );
-  const {
-    total_assets,
-    total_liabilities,
-    net_worth,
-    monthly_surplus,
-    emergency_fund_months,
-    debt_to_income_ratio,
-    assets,
-    liabilities,
-  } = p;
+  }
+
+  const assets = data.assets || [];
+  const liabilities = data.liabilities || [];
+  const latestSnapshot = data.snapshots?.[0];
+
+  const total_assets = assets.reduce((s, a) => s + Number(a.value), 0);
+  const total_liabilities = liabilities.reduce((s, l) => s + Number(l.amount), 0);
+  const net_worth = total_assets - total_liabilities;
+  const monthly_surplus = (Number(latestSnapshot?.monthlyIncome) || 0) - (Number(latestSnapshot?.monthlyExpenses) || 0);
+  const emergency_fund = Number(latestSnapshot?.emergencyFund) || 0;
+  const monthly_income = Number(latestSnapshot?.monthlyIncome) || 0;
+  const emergency_fund_months = monthly_income > 0 ? Math.round(emergency_fund / (monthly_income - (Number(latestSnapshot?.monthlyExpenses) || 0))) : 0;
+  const debt_to_income_ratio = monthly_income > 0 ? (total_liabilities / (monthly_income * 12)) : 0;
+
   const byType = Object.entries(ASSET_LABELS)
     .map(([k, label]) => ({
       name: label,
       value: assets
-        .filter((a) => a.asset_type === k)
+        .filter((a) => a.assetType === k)
         .reduce((s, a) => s + Number(a.value), 0),
     }))
     .filter((x) => x.value > 0);
@@ -652,7 +709,7 @@ function SummaryTab() {
     .map(([k, label]) => ({
       name: label,
       value: liabilities
-        .filter((l) => l.liability_type === k)
+        .filter((l) => l.liabilityType === k)
         .reduce((s, l) => s + Number(l.amount), 0),
     }))
     .filter((x) => x.value > 0);
@@ -728,7 +785,7 @@ function SummaryTab() {
                 : "text-green-600")
             }
           >
-            {debt_to_income_ratio}x
+            {debt_to_income_ratio.toFixed(1)}x
           </div>
         </div>
       </div>
@@ -862,25 +919,50 @@ const TABS = [
 
 export default function FinancialsPage() {
   const [tab, setTab] = useState("income");
+  const [selectedClientId, setSelectedClientId] = useState<string>("");
+
+  const { data: clients = [], isLoading: loadingClients } = useQuery<AdvisorClient[]>({
+    queryKey: ["advisor-clients"],
+    queryFn: () => fetch(API + "/api/clients").then((r) => r.json()),
+  });
+
+  const handleClientChange = (clientId: string) => {
+    setSelectedClientId(clientId);
+  };
+
   return (
     <div className="min-h-screen bg-white p-4 md:p-6">
       <div className="max-w-4xl mx-auto">
         <div className="mb-6">
           <h1 className="text-2xl font-bold text-black">Financial Tracker</h1>
           <p className="text-gray-600 text-sm mt-1">
-            Track your income, expenses, assets, and net worth
+            Track your client&apos;s income, expenses, assets, and net worth
           </p>
         </div>
+
+        <ClientSelector
+          selected={selectedClientId}
+          clients={clients}
+          onChange={handleClientChange}
+        />
+
+        {!selectedClientId && (
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-sm text-yellow-800 mb-4">
+            Please select a client above to manage their financial data.
+          </div>
+        )}
+
         <div className="flex gap-1 bg-gray-100 border border-gray-200 rounded-lg p-1 mb-6 overflow-x-auto">
           {TABS.map((t) => (
             <button
               key={t.id}
               onClick={() => setTab(t.id)}
+              disabled={!selectedClientId}
               className={
                 "flex-1 min-w-fit px-4 py-2 rounded-md text-sm font-medium transition-colors " +
                 (tab === t.id
                   ? "bg-white text-black shadow-sm"
-                  : "text-gray-500 hover:text-black")
+                  : "text-gray-500 hover:text-black disabled:opacity-50 disabled:cursor-not-allowed")
               }
             >
               {t.label}
@@ -888,10 +970,10 @@ export default function FinancialsPage() {
           ))}
         </div>
         <div className="bg-white border border-gray-200 rounded-xl p-5">
-          {tab === "income" && <SnapshotForm />}
-          {tab === "assets" && <AssetsTab />}
-          {tab === "liabilities" && <LiabilitiesTab />}
-          {tab === "summary" && <SummaryTab />}
+          {tab === "income" && <SnapshotForm clientId={selectedClientId} />}
+          {tab === "assets" && <AssetsTab clientId={selectedClientId} />}
+          {tab === "liabilities" && <LiabilitiesTab clientId={selectedClientId} />}
+          {tab === "summary" && <SummaryTab clientId={selectedClientId} />}
         </div>
       </div>
     </div>

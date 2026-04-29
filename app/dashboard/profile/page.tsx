@@ -3,7 +3,13 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { CheckCircle, XCircle, Clock, Edit2, Save, Phone, Briefcase, Heart } from 'lucide-react';
+import { CheckCircle, XCircle, Clock, Edit2, Save, Phone, Briefcase, Heart, ArrowRight } from 'lucide-react';
+
+async function fetchMe() {
+  const res = await fetch('/api/client/me', { credentials: 'include' });
+  if (!res.ok) throw new Error('Failed');
+  return res.json();
+}
 
 async function fetchProfile() {
   const res = await fetch('/api/client/profile', { credentials: 'include' });
@@ -53,6 +59,7 @@ export default function ProfilePage() {
     phone_number: '',
   });
 
+  const { data: me } = useQuery({ queryKey: ['me'], queryFn: fetchMe });
   const { data: profile, isLoading: profileLoading, error: profileError } = useQuery({
     queryKey: ['profile'],
     queryFn: fetchProfile,
@@ -101,6 +108,13 @@ export default function ProfilePage() {
     updateMutation.mutate(payload);
   };
 
+  const greeting = () => {
+    const h = new Date().getHours();
+    if (h < 12) return 'Good morning';
+    if (h < 17) return 'Good afternoon';
+    return 'Good evening';
+  };
+
   if (profileLoading || statusLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-white">
@@ -124,9 +138,33 @@ export default function ProfilePage() {
 
   return (
     <div className="max-w-5xl mx-auto py-8 px-4 bg-white min-h-screen">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-black">My Profile</h1>
-        <p className="text-gray-600 mt-1">Manage your personal information and KYC status</p>
+      {/* Header */}
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-gray-900">
+          {greeting()}, {me?.fullName || me?.email?.split('@')[0] || 'there'} 👋
+        </h1>
+        <p className="text-gray-500 text-sm mt-0.5">Here is your financial planning overview.</p>
+      </div>
+
+      {/* Status strip */}
+      <div className="grid grid-cols-3 gap-3 mb-6">
+        {[
+          { label: 'ID Uploaded', done: status?.id_uploaded },
+          { label: 'Face Verified', done: status?.face_verified },
+          { label: 'Admin Approved', done: status?.admin_verified },
+        ].map(({ label, done }) => (
+          <div key={label} className="bg-white rounded-xl border border-gray-200 p-3 flex items-center gap-3">
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center ${done ? 'bg-green-100' : 'bg-gray-100'}`}>
+              {done ? <CheckCircle className="w-4 h-4 text-green-600" /> : <Clock className="w-4 h-4 text-gray-400" />}
+            </div>
+            <div>
+              <p className="text-xs font-medium text-gray-700">{label}</p>
+              <p className={`text-xs font-semibold ${done ? 'text-green-600' : 'text-yellow-600'}`}>
+                {done ? 'Complete' : 'Pending'}
+              </p>
+            </div>
+          </div>
+        ))}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -306,27 +344,6 @@ export default function ProfilePage() {
         {/* Sidebar */}
         <div className="space-y-5">
 
-          {/* KYC Status */}
-          <div className="bg-white rounded-xl border border-gray-200 p-5">
-            <h3 className="text-base font-semibold text-black mb-4">KYC Status</h3>
-            <div className="space-y-3">
-              {[
-                { label: 'ID Uploaded', done: status?.id_uploaded },
-                { label: 'Face Verified', done: status?.face_verified },
-                { label: 'Admin Verified', done: status?.admin_verified },
-              ].map(({ label, done }) => (
-                <div key={label} className="flex items-center justify-between">
-                  <span className="text-sm text-gray-700">{label}</span>
-                  {done ? (
-                    <CheckCircle className="w-5 h-5 text-green-500" />
-                  ) : (
-                    <XCircle className="w-5 h-5 text-gray-300" />
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-
           {/* Profile Completion */}
           <div className="bg-white rounded-xl border border-gray-200 p-5">
             <h3 className="text-base font-semibold text-black mb-4">Profile Completion</h3>
@@ -354,6 +371,24 @@ export default function ProfilePage() {
                 </ul>
               </div>
             )}
+          </div>
+
+          {/* Quick Actions */}
+          <div className="bg-white rounded-xl border border-gray-200 p-5">
+            <h3 className="text-base font-semibold text-black mb-4">Quick Actions</h3>
+            <div className="space-y-2">
+              {[
+                { href: '/dashboard/analysis', label: 'View Analysis', desc: 'Financial health analysis', color: 'blue' },
+                { href: '/dashboard/products', label: 'Browse Products', desc: 'Investment & insurance', color: 'purple' },
+                { href: '/dashboard/financials', label: 'Financial Tracker', desc: 'Income, expenses & goals', color: 'emerald' },
+              ].map(({ href, label, desc, color }) => (
+                <a key={href} href={href}
+                  className={`block bg-${color}-50 border border-${color}-100 rounded-lg p-3 hover:bg-${color}-100 transition`}>
+                  <p className="text-sm font-semibold text-gray-900">{label}</p>
+                  <p className="text-xs text-gray-500 mt-0.5">{desc}</p>
+                </a>
+              ))}
+            </div>
           </div>
 
           {/* Verification Timeline */}

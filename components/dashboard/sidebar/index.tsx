@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard, User, PiggyBank, Shield, Settings,
-  FileText, ChevronLeft, LogOut, Scale, Bell,
+  FileText, ChevronLeft, LogOut, Scale, Bell, Users,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -71,14 +71,19 @@ export default function Sidebar({ role, approvedByAdmin, onLogout, userName, use
       <nav className="flex-1 overflow-y-auto py-4 space-y-2">
         {/* Financial section — visible to all */}
         <SidebarSection label="Financial Planning">
-          <SidebarLink href="/dashboard/overview" icon={<LayoutDashboard className="w-4 h-4" />}>
-            Overview
-          </SidebarLink>
           <SidebarLink href="/client/profile" icon={<User className="w-4 h-4" />}>
             My Profile
           </SidebarLink>
+          {isAdvisor && (
+            <SidebarLink href="/dashboard/client" icon={<Users className="w-4 h-4" />}>
+              My Client
+            </SidebarLink>
+          )}
           <SidebarLink href="/dashboard/financial-tracker" icon={<PiggyBank className="w-4 h-4" />}>
             Financial Tracker
+          </SidebarLink>
+          <SidebarLink href="/insurance" icon={<Shield className="w-4 h-4" />}>
+            AI Insurance
           </SidebarLink>
           <SidebarLink href="/dashboard/products" icon={<Shield className="w-4 h-4" />}>
             Products
@@ -88,12 +93,7 @@ export default function Sidebar({ role, approvedByAdmin, onLogout, userName, use
           </SidebarLink>
         </SidebarSection>
 
-        {/* AI Insurance — visible to all logged-in users */}
-        <SidebarSection label="Advisor Tools">
-          <SidebarLink href="/insurance" icon={<Shield className="w-4 h-4" />}>
-            AI Insurance
-          </SidebarLink>
-        </SidebarSection>
+        
 
         {/* Admin — admin only */}
         {role === 'admin' && (
