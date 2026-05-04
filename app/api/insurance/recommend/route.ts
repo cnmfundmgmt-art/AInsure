@@ -72,7 +72,12 @@ function fmt(n: number | null | undefined) {
 
 // ─── MiniMax call ──────────────────────────────────────────────────────────────
 
-async function callMiniMaxStream(system: string, user: string, callback: (text: string) => void, maxTokens = 8192): Promise<void> {
+async function callMiniMaxStream(
+  system: string,
+  messages: Array<{ role: 'user' | 'assistant'; content: string }>,
+  callback: (text: string) => void,
+  maxTokens = 8192
+): Promise<void> {
   console.log('[MiniMax] Streaming...');
   const res = await fetch(`${MINIMAX_BASE_URL}/messages`, {
     method: 'POST',
@@ -87,7 +92,7 @@ async function callMiniMaxStream(system: string, user: string, callback: (text: 
       max_tokens: maxTokens,
       stream: true,
       system,
-      messages: [{ role: 'user', content: user }],
+      messages,
     }),
   });
 
@@ -210,14 +215,14 @@ Given a client's profile, you MUST:
 
 // ─── Build user prompt ─────────────────────────────────────────────────────────
 
-function buildUserPrompt(client: Record<string, unknown>, existingText: string, query?: string, historyContext?: string, attachments?: Attachment[]) {
+function buildUserPromptContent(client: Record<string, unknown>, existingText: string, query?: string, attachments?: Attachment[]): string {
   const querySection = query ? `\n\n## Current User Question\nThe advisor is asking: "${query}"\nAnswer this specific question based on the client profile and product catalog above.` : '';
   const attachmentSection = attachments && attachments.length > 0
     ? `\n\n## Attached Files\nThe user has attached ${attachments.length} file(s) for your analysis:\n${attachments.map((a, i) => `### File ${i + 1}: ${a.name} (${a.type}, ${a.size} bytes)\n\`\`\`\n${Buffer.from(a.data, 'base64').toString('utf-8').slice(0, 5000)}\n\`\`\``).join('\n\n')}`
     : '';
   return `## Client Profile
 - Name: ${client.name || 'Client'}
-- Age: ${client.age} years old${historyContext || ''}
+- Age: ${client.age} years old
 - Gender: ${client.gender || 'Not specified'}
 - Annual Income: RM ${Number(client.income || 0).toLocaleString()}
 - Monthly Budget: RM ${Number(client.monthlyBudget || 0).toLocaleString()}
@@ -266,9 +271,10 @@ export async function POST(req: NextRequest) {
       sessionId?: string;
       query?: string;
       attachments?: Attachment[];
+      history?: Array<{ role: 'user' | 'assistant'; content: string }>;
     };
 
-    const { client, query, attachments } = body;
+    const { client, query, attachments, history = [] } = body;
     if (!client || !client.age || !client.income) {
       return NextResponse.json({ error: 'Missing age or income' }, { status: 400 });
     }
@@ -278,22 +284,16 @@ export async function POST(req: NextRequest) {
       ? existingPolicies.map((p) => `- ${p.policyType}: RM ${p.sumAssured.toLocaleString()} sum assured, RM ${p.premium.toLocaleString()}/yr`).join('\n')
       : 'None';
 
-    // History context disabled for speed — re-enable if session continuity is needed
-    let historyContext = '';
-    // try {
-    //   const db = getDb();
-    //   const sessionRows = await db.execute({
-    //     sql: `SELECT client_name, analysis_data, created_at
-    //           FROM insurance_analysis_sessions
-    //           WHERE client_name = ? AND id != ?
-    //           ORDER BY created_at DESC LIMIT 1`,
-    //     args: [(client.name as string) || 'Unknown', body.sessionId || ''],
-    //   });
-    //   if (sessionRows.rows && sessionRows.rows.length > 0) { ... }
-    // } catch { /* ignore */ }
     const systemPrompt = buildSystemPrompt(catalog.products, catalog.fields);
 
-    const userPrompt = buildUserPrompt(client, existingText, query, historyContext, attachments);
+    // Build the current user message from client profile + query
+    const currentUserContent = buildUserPromptContent(client, existingText, query, attachments);
+
+    // Build messages array: history + current user message
+    const messages: Array<{ role: 'user' | 'assistant'; content: string }> = [
+      ...history.map(h => ({ role: h.role as 'user' | 'assistant', content: h.content })),
+      { role: 'user', content: currentUserContent },
+    ];
 
     let fullText = '';
 
@@ -302,7 +302,7 @@ export async function POST(req: NextRequest) {
       const stream = new ReadableStream({
         async start(controller) {
           try {
-            await callMiniMaxStream(systemPrompt, userPrompt, (text) => {
+            await callMiniMaxStream(systemPrompt, messages, (text) => {
               controller.enqueue(encoder.encode(text));
               fullText += text;
             }, 8192);

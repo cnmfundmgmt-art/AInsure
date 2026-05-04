@@ -27,7 +27,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const isAdvisor = role === 'advisor' || role === 'admin';
 
   const NAV = [
-    { href: '/client/profile', label: 'My Profile', icon: User },
+    { href: '/dashboard/profile', label: 'My Profile', icon: User },
     ...(isAdvisor ? [{ href: '/dashboard/client', label: 'My Client', icon: Users }] : []),
     { href: '/dashboard/financials', label: 'Financial Tracker', icon: PiggyBank },
     { href: '/insurance', label: 'AI Insurance', icon: Shield },

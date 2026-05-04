@@ -528,8 +528,9 @@ export default function InsurancePreview() {
   const [clients, setClients] = useState<AdvisorClient[]>([]);
   const [role, setRole] = useState<string | null>(null);
 
-  // Chat state
+  // Chat state — initialize empty, restore from sessionStorage after mount
   const [messages, setMessages] = useState<Message[]>([]);
+  const [hydrated, setHydrated] = useState(false);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -552,6 +553,30 @@ export default function InsurancePreview() {
     existingEndowmentCover: 0,
     investmentPreference: null,
   });
+
+// Restore messages from sessionStorage and set welcome message — runs once after mount
+  useEffect(() => {
+    try {
+      const saved = sessionStorage.getItem('insurance_messages');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setMessages(parsed);
+          setHydrated(true);
+          return;
+        }
+      }
+    } catch { /* ignore */ }
+
+    // No saved history — set welcome message
+    setMessages([{
+      id: nanoid(),
+      role: 'assistant',
+      type: 'welcome',
+      content: `👋 Hi! I'm your AI Insurance Strategist.\n\nComplete the intake form on the left, then ask me about coverage recommendations, product comparisons, or pitch scripts.`,
+    }]);
+    setHydrated(true);
+  }, []);
 
   // Fetch role and clients on mount
   useEffect(() => {
@@ -659,9 +684,23 @@ export default function InsurancePreview() {
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
+  // Persist messages to sessionStorage on change
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      sessionStorage.setItem('insurance_messages', JSON.stringify(messages));
+    } catch { /* ignore quota errors */ }
+  }, [messages]);
+
   const sendMessage = useCallback(async (text: string, attachedFiles?: Attachment[]) => {
     if (!text.trim() && (!attachedFiles || attachedFiles.length === 0) || loading) return;
     const files = attachedFiles || attachments;
+
+    // Build history from messages state (strip extra fields, keep role + content only)
+    const history: Array<{ role: 'user' | 'assistant'; content: string }> = messages
+      .filter(m => m.role === 'user' || m.role === 'assistant')
+      .map(m => ({ role: m.role, content: m.content || '' }));
+
     const userMsg: Message = { id: nanoid(), role: 'user', content: text, attachments: files.length > 0 ? files : undefined };
     setMessages(prev => [...prev, userMsg]);
     setInput('');
@@ -673,7 +712,7 @@ export default function InsurancePreview() {
       const res = await fetch('/api/insurance/recommend', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ client, query: text, attachments: files }),
+        body: JSON.stringify({ client, query: text, attachments: files, history }),
       });
       const assistantMsg: Message = { id: nanoid(), role: 'assistant', content: '' };
       setMessages(prev => [...prev, assistantMsg]);
@@ -701,7 +740,7 @@ export default function InsurancePreview() {
     } finally {
       setLoading(false);
     }
-  }, [form, loading, attachments]);
+  }, [form, loading, attachments, messages]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -819,12 +858,33 @@ export default function InsurancePreview() {
           </div>
         </div>
 
-        {/* Right panel (optional) */}
+        {/* Right panel — Conversation History */}
         <div className={`w-72 bg-white border-l border-gray-200 flex-shrink-0 overflow-y-auto p-4 ${showRight ? 'block' : 'hidden lg:block'}`}>
-          <div className="flex flex-col items-center justify-center h-32 text-center space-y-2">
-            <Package className="w-8 h-8 text-gray-300" />
-            <p className="text-xs text-gray-400">Product browser coming soon</p>
-          </div>
+          <h3 className="text-xs font-bold text-gray-500 uppercase mb-3">Conversation</h3>
+          {!hydrated ? (
+            <p className="text-xs text-gray-400">Loading…</p>
+          ) : messages.filter(m => m.role !== 'assistant' || m.content).length === 0 ? (
+            <p className="text-xs text-gray-400">No messages yet.</p>
+          ) : (
+            <div className="space-y-2">
+              {messages.map((msg, i) => {
+                if (!msg.content && msg.role === 'assistant') return null;
+                return (
+                  <div key={msg.id} className="text-xs border border-gray-100 rounded-lg p-2">
+                    <div className="flex items-center gap-1 mb-1">
+                      <span className={`font-semibold text-[10px] uppercase px-1.5 py-0.5 rounded ${msg.role === 'user' ? 'bg-indigo-100 text-indigo-700' : 'bg-green-100 text-green-700'}`}>
+                        {msg.role === 'user' ? 'You' : 'AI'}
+                      </span>
+                      <span className="text-gray-400 text-[10px]">#{i + 1}</span>
+                    </div>
+                    <p className="text-gray-700 leading-relaxed line-clamp-4">
+                      {msg.content?.slice(0, 200)}{msg.content && msg.content.length > 200 ? '…' : ''}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
     </div>
