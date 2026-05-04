@@ -351,7 +351,7 @@ function AssetsTab({ clientId }: { clientId: string }) {
           <div className="bg-white border border-gray-200 rounded-xl p-6 max-w-sm w-full mx-4">
             <h3 className="text-black font-semibold mb-2">Delete Asset?</h3>
             <p className="text-gray-600 text-sm mb-4">Cannot be undone.</p>
-            <div class="flex gap-3">
+            <div className="flex gap-3">
               <button
                 onClick={() => setDelId(null)}
                 className="flex-1 bg-gray-100 hover:bg-gray-200 text-black rounded-lg py-2 text-sm"
@@ -557,7 +557,7 @@ function LiabilitiesTab({ clientId }: { clientId: string }) {
               Delete Liability?
             </h3>
             <p className="text-gray-600 text-sm mb-4">Cannot be undone.</p>
-            <div class="flex gap-3">
+            <div className="flex gap-3">
               <button
                 onClick={() => setDelId(null)}
                 className="flex-1 bg-gray-100 hover:bg-gray-200 text-black rounded-lg py-2 text-sm"
