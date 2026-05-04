@@ -49,7 +49,7 @@ export async function GET(
 // POST /api/clients/[id]/goals - create goal for advisor client
 export async function POST(
   req: NextRequest,
-  { params }: { params: { id: string }
+  { params }: { params: { id: string } }
 ) {
   try {
     const session = await verifySession(req);
