@@ -11,6 +11,7 @@ const MINIMAX_BASE_URL = process.env.MINIMAX_BASE_URL || 'https://api.minimax.io
 export interface ChatRequest {
   sessionId: string;
   message: string;
+  advisorId?: string;
   clientContext?: {
     name?: string;
     income?: number;
@@ -24,6 +25,7 @@ export interface ChatRequest {
 export interface ChatResponse {
   sessionId: string;
   reply: string;
+  totalTokens?: number;
 }
 
 function buildSystemPrompt(): string {
@@ -86,9 +88,9 @@ function buildContextAwareSystem(sessionId: string, clientContext?: ChatRequest[
 async function callMiniMax(
   system: string,
   messages: Array<{ role: 'user' | 'assistant'; content: string }>
-): Promise<string> {
+): Promise<{ text: string; totalTokens?: number }> {
   if (!MINIMAX_API_KEY) {
-    return '⚠️ AI advisor is not configured. Please set MINIMAX_API_KEY in your environment.';
+    return { text: '⚠️ AI advisor is not configured. Please set MINIMAX_API_KEY in your environment.' };
   }
 
   const res = await fetch(`${MINIMAX_BASE_URL}/messages`, {
@@ -111,17 +113,21 @@ async function callMiniMax(
   if (!res.ok) {
     const err = await res.text();
     console.error('[chat service] LLM error:', err);
-    return '⚠️ AI advisor encountered an error. Please try again or contact support.';
+    return { text: '⚠️ AI advisor encountered an error. Please try again or contact support.' };
   }
 
-  const data = await res.json() as { content?: Array<{ type: string; text?: string }> };
-  const text = data.content?.[0]?.text;
-  return text || 'No response received.';
+  const data = await res.json() as {
+    content?: Array<{ type: string; text?: string }>;
+    usage?: { tokens?: number; input_tokens?: number; output_tokens?: number };
+  };
+  const text = data.content?.[0]?.text || 'No response received.';
+  const totalTokens = data.usage?.tokens;
+  return { text, totalTokens };
 }
 
 export async function chat(req: ChatRequest): Promise<ChatResponse> {
   const db = getDb();
-  const { sessionId, message, clientContext } = req;
+  const { sessionId, message, advisorId, clientContext } = req;
 
   const now = Math.floor(Date.now() / 1000);
 
@@ -131,6 +137,8 @@ export async function chat(req: ChatRequest): Promise<ChatResponse> {
     role: 'user',
     content: message,
     metadata: null,
+    totalTokens: null,
+    advisorId: advisorId || null,
     createdAt: now,
   }).run();
 
@@ -151,7 +159,7 @@ export async function chat(req: ChatRequest): Promise<ChatResponse> {
       content: m.content,
     }));
 
-  const reply = await callMiniMax(systemPrompt, llmMessages.length > 0 ? llmMessages : [{ role: 'user', content: message }]);
+  const { text: reply, totalTokens } = await callMiniMax(systemPrompt, llmMessages.length > 0 ? llmMessages : [{ role: 'user', content: message }]);
 
   await db.insert(chatMessages).values({
     id: nanoid(),
@@ -159,8 +167,10 @@ export async function chat(req: ChatRequest): Promise<ChatResponse> {
     role: 'assistant',
     content: reply,
     metadata: JSON.stringify({ model: 'MiniMax-M2.7' }),
+    totalTokens: totalTokens || null,
+    advisorId: advisorId || null,
     createdAt: Math.floor(Date.now() / 1000),
   }).run();
 
-  return { sessionId, reply };
+  return { sessionId, reply, totalTokens };
 }

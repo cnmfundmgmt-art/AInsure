@@ -336,6 +336,8 @@ export const chatMessages = sqliteTable('chat_messages', {
   role: text('role').notNull(),
   content: text('content').notNull(),
   metadata: text('metadata'),
+  totalTokens: integer('total_tokens'),
+  advisorId: text('advisor_id'),
   createdAt: integer('created_at').notNull(),
 });
 

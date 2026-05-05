@@ -11,6 +11,12 @@ async function fetchMe() {
   return res.json();
 }
 
+async function fetchInsuranceStats() {
+  const res = await fetch('/api/insurance/stats', { credentials: 'include' });
+  if (!res.ok) throw new Error('Failed to fetch stats');
+  return res.json();
+}
+
 async function fetchProfile() {
   const res = await fetch('/api/client/profile', { credentials: 'include' });
   if (!res.ok) throw new Error('Failed to fetch profile');
@@ -69,6 +75,12 @@ export default function ProfilePage() {
   const { data: status, isLoading: statusLoading, error: statusError } = useQuery({
     queryKey: ['profile-status'],
     queryFn: fetchStatus,
+    retry: 1,
+  });
+
+  const { data: insuranceStats } = useQuery({
+    queryKey: ['insurance-stats'],
+    queryFn: fetchInsuranceStats,
     retry: 1,
   });
 
@@ -166,6 +178,45 @@ export default function ProfilePage() {
           </div>
         ))}
       </div>
+
+      {/* AI Token Usage */}
+      {insuranceStats && (
+        <div className="grid grid-cols-3 gap-3 mb-6">
+          <div className="bg-indigo-50 rounded-xl border border-indigo-200 p-3 flex items-center gap-3">
+            <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center">
+              <span className="text-xs font-bold text-indigo-600">⚡</span>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-indigo-700">Total Tokens Used</p>
+              <p className="text-sm font-bold text-indigo-900">
+                {insuranceStats.totalTokens?.toLocaleString() ?? 0}
+              </p>
+            </div>
+          </div>
+          <div className="bg-indigo-50 rounded-xl border border-indigo-200 p-3 flex items-center gap-3">
+            <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center">
+              <span className="text-xs font-bold text-indigo-600">💬</span>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-indigo-700">Questions Asked</p>
+              <p className="text-sm font-bold text-indigo-900">
+                {insuranceStats.userMessageCount ?? 0}
+              </p>
+            </div>
+          </div>
+          <div className="bg-indigo-50 rounded-xl border border-indigo-200 p-3 flex items-center gap-3">
+            <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center">
+              <span className="text-xs font-bold text-indigo-600">🤖</span>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-indigo-700">AI Responses</p>
+              <p className="text-sm font-bold text-indigo-900">
+                {insuranceStats.assistantMessageCount ?? 0}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
