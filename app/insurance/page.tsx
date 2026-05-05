@@ -612,7 +612,7 @@ export default function InsurancePreview() {
 
   // Load chat history from DB when sessionId changes (last 50 only)
   const loadChatHistory = useCallback((sid: string, prepend = false) => {
-    fetch(`/api/chat/${sid}/messages?limit=50`)
+    fetch(`/api/chat/${sid}/messages?limit=20`)
       .then(r => r.json())
       .then(d => {
         if (d.messages && d.messages.length > 0) {
@@ -622,7 +622,7 @@ export default function InsurancePreview() {
             content: m.content,
           }));
           setMessages(prev => prepend ? [...restored, ...prev] : restored);
-          setHasMoreMessages(d.messages.length >= 50);
+          setHasMoreMessages(d.messages.length >= 20);
           setHydrated(true);
         } else {
           setMessages([{
