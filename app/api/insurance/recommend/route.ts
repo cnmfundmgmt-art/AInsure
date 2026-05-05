@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@libsql/client';
+import { getSession } from '@/lib/auth/session';
 
 const DATABASE_URL = process.env.DATABASE_URL || 'file:./data/cfp_local.db';
 const MINIMAX_API_KEY = process.env.MINIMAX_API_KEY || '';
@@ -77,7 +78,7 @@ async function callMiniMaxStream(
   messages: Array<{ role: 'user' | 'assistant'; content: string }>,
   callback: (text: string) => void,
   maxTokens = 8192
-): Promise<void> {
+): Promise<{ totalTokens?: number }> {
   console.log('[MiniMax] Streaming...');
   const res = await fetch(`${MINIMAX_BASE_URL}/messages`, {
     method: 'POST',
@@ -106,6 +107,7 @@ async function callMiniMaxStream(
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+  let totalTokens: number | undefined;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -122,10 +124,19 @@ async function callMiniMaxStream(
           if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
             callback(event.delta.text || '');
           }
+          if (event.type === 'message_delta' && event.usage?.tokens) {
+            totalTokens = event.usage.tokens;
+          }
         } catch { /* ignore parse errors */ }
       }
     }
   }
+
+  return { totalTokens };
+}
+
+function estimateTokens(text: string): number {
+  return Math.ceil(new TextEncoder().encode(text).length / 4);
 }
 
 async function uploadFileToMinimax(filename: string, mimeType: string, data: string): Promise<string> {
@@ -274,7 +285,7 @@ export async function POST(req: NextRequest) {
       history?: Array<{ role: 'user' | 'assistant'; content: string }>;
     };
 
-    const { client, query, attachments, history = [] } = body;
+    const { client, sessionId, query, attachments, history = [] } = body;
     if (!client || !client.age || !client.income) {
       return NextResponse.json({ error: 'Missing age or income' }, { status: 400 });
     }
@@ -296,19 +307,43 @@ export async function POST(req: NextRequest) {
     ];
 
     let fullText = '';
+    let totalTokens: number | undefined;
+
+    const session = await getSession();
+    const advisorId = session?.userId || null;
+    const sid = sessionId || ('sess_' + Math.random().toString(36).slice(2, 12));
+    const now = Math.floor(Date.now() / 1000);
+
+    const db = createClient({ url: DATABASE_URL });
+
+    if (query && advisorId) {
+      await db.execute({
+        sql: `INSERT INTO chat_messages (id, session_id, role, content, metadata, total_tokens, advisor_id, created_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        args: [crypto.randomUUID(), sid, 'user', query, null, null, advisorId, now],
+      });
+    }
 
     try {
       const encoder = new TextEncoder();
       const stream = new ReadableStream({
         async start(controller) {
           try {
-            await callMiniMaxStream(systemPrompt, messages, (text) => {
+            const result = await callMiniMaxStream(systemPrompt, messages, (text) => {
               controller.enqueue(encoder.encode(text));
               fullText += text;
             }, 8192);
+            totalTokens = result.totalTokens;
           } catch (e) {
             controller.error(e);
           } finally {
+            if (advisorId && fullText) {
+              db.execute({
+                sql: `INSERT INTO chat_messages (id, session_id, role, content, metadata, total_tokens, advisor_id, created_at)
+                      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                args: [crypto.randomUUID(), sid, 'assistant', fullText, JSON.stringify({ model: 'MiniMax-M2.7' }), totalTokens || estimateTokens(fullText) || null, advisorId, Math.floor(Date.now() / 1000)],
+              }).catch(err => console.error('[recommend] save assistant msg error:', err));
+            }
             controller.close();
           }
         },

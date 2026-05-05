@@ -6,14 +6,14 @@
  *
  * Endpoints:
  * POST /api/chat/[sessionId]/messages  - Add a message
- * GET  /api/chat/[sessionId]/messages   - Get conversation history
- * DELETE /api/chat/[sessionId]          - Delete session messages
+ * GET  /api/chat/[sessionId]/messages  - Get conversation history
+ * DELETE /api/chat/[sessionId]/messages - Delete session messages
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db/client';
 import { chatMessages } from '@/lib/db/schema';
-import { sql } from 'drizzle-orm';
+import { sql, desc } from 'drizzle-orm';
 
 function nanoid() {
   return Math.random().toString(36).slice(2, 12);
@@ -69,9 +69,10 @@ export async function GET(
     const result = await db.select({ role: chatMessages.role, content: chatMessages.content })
       .from(chatMessages)
       .where(sql`${chatMessages.sessionId} = ${sessionId}`)
-      .orderBy(chatMessages.createdAt)
+      .orderBy(desc(chatMessages.createdAt))
       .limit(limit)
-      .all();
+      .all()
+      .then(rows => rows.reverse());
 
     const messages = result.map((row: { role: string; content: string }) => ({
       role: row.role,

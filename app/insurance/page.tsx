@@ -571,27 +571,66 @@ export default function InsurancePreview() {
     investmentPreference: null,
   });
 
-// Mount: find last session or create new one
+// Mount: find last session or create new one, then load history
   useEffect(() => {
     fetch('/api/chat/last-session')
       .then(r => r.json())
       .then(d => {
+        const sid = d.sessionId || ('sess_' + Math.random().toString(36).slice(2, 12));
         if (d.sessionId) {
-          const stored = sessionStorage.getItem('insurance_session_id');
-          if (stored !== d.sessionId) {
-            sessionStorage.setItem('insurance_session_id', d.sessionId);
-          }
-          setSessionId(d.sessionId);
+          sessionStorage.setItem('insurance_session_id', d.sessionId);
         } else {
-          const newId = 'sess_' + Math.random().toString(36).slice(2, 12);
-          sessionStorage.setItem('insurance_session_id', newId);
-          setSessionId(newId);
+          sessionStorage.setItem('insurance_session_id', sid);
         }
+        setSessionId(sid);
+        return sid;
+      })
+      .then(sid => {
+        return fetch(`/api/chat/${sid}/messages?limit=20`)
+          .then(r => r.json())
+          .then(data => {
+            if (data.messages && data.messages.length > 0) {
+              const restored: Message[] = data.messages.map((m: { role: string; content: string }, i: number) => ({
+                id: `restored-${sid}-${i}`,
+                role: m.role as 'user' | 'assistant',
+                content: m.content,
+              }));
+              setMessages(restored);
+              setHasMoreMessages(data.messages.length >= 20);
+            } else {
+              setMessages([{
+                id: nanoid(),
+                role: 'assistant',
+                type: 'welcome',
+                content: `👋 Hi! I'm your AI Insurance Strategist.\n\nComplete the intake form on the left, then ask me about coverage recommendations, product comparisons, or pitch scripts.`,
+              }]);
+              setHasMoreMessages(false);
+            }
+            setHydrated(true);
+          })
+          .catch(() => {
+            setMessages([{
+              id: nanoid(),
+              role: 'assistant',
+              type: 'welcome',
+              content: `👋 Hi! I'm your AI Insurance Strategist.\n\nComplete the intake form on the left, then ask me about coverage recommendations, product comparisons, or pitch scripts.`,
+            }]);
+            setHasMoreMessages(false);
+            setHydrated(true);
+          });
       })
       .catch(() => {
         const newId = 'sess_' + Math.random().toString(36).slice(2, 12);
         sessionStorage.setItem('insurance_session_id', newId);
         setSessionId(newId);
+        setMessages([{
+          id: nanoid(),
+          role: 'assistant',
+          type: 'welcome',
+          content: `👋 Hi! I'm your AI Insurance Strategist.\n\nComplete the intake form on the left, then ask me about coverage recommendations, product comparisons, or pitch scripts.`,
+        }]);
+        setHasMoreMessages(false);
+        setHydrated(true);
       });
   }, []);
 
@@ -646,11 +685,6 @@ export default function InsurancePreview() {
         setHydrated(true);
       });
   }, []);
-
-  useEffect(() => {
-    if (!sessionId) return;
-    loadChatHistory(sessionId);
-  }, [sessionId, loadChatHistory]);
 
   // Load financial snapshot when client selected
   useEffect(() => {
