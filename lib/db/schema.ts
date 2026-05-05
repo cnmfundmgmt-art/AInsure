@@ -328,6 +328,17 @@ export const insuranceAnalysisSessions = sqliteTable('insurance_analysis_session
   createdAt: integer('created_at').notNull(),
 });
 
+// ─── CHAT MESSAGES ─────────────────────────────────────────────────────────
+
+export const chatMessages = sqliteTable('chat_messages', {
+  id: text('id').primaryKey(),
+  sessionId: text('session_id').notNull(),
+  role: text('role').notNull(),
+  content: text('content').notNull(),
+  metadata: text('metadata'),
+  createdAt: integer('created_at').notNull(),
+});
+
 // ─── CLIENT POLICIES ─────────────────────────────────────────────────────────
 
 export const clientPolicies = sqliteTable('client_policies', {

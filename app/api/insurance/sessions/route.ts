@@ -4,14 +4,9 @@
  * Query: limit (default 20), offset (default 0)
  */
 import { NextRequest, NextResponse } from 'next/server';
-
-const DATABASE_URL = process.env.DATABASE_URL || 'file:./data/cfp_local.db';
-
-function getDb() {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { createClient } = require('@libsql/client');
-  return createClient({ url: DATABASE_URL });
-}
+import { getDb } from '@/lib/db/client';
+import { insuranceAnalysisSessions } from '@/lib/db/schema';
+import { sql, desc } from 'drizzle-orm';
 
 export async function GET(req: NextRequest) {
   try {
@@ -20,28 +15,31 @@ export async function GET(req: NextRequest) {
     const limit = Math.min(parseInt(searchParams.get('limit') || '20'), 50);
     const offset = parseInt(searchParams.get('offset') || '0');
 
-    const countRows = await db.execute({
-      sql: 'SELECT COUNT(*) as total FROM insurance_analysis_sessions',
-      args: [],
-    });
-    const total = (countRows.rows?.[0] as Record<string, unknown>)?.total as number || 0;
+    const countResult = await db.select({ count: sql<number>`count(*)` }).from(insuranceAnalysisSessions).get();
+    const total = countResult?.count || 0;
 
-    const rows = await db.execute({
-      sql: `SELECT id, client_name, client_ic, annual_income, monthly_budget, created_at
-            FROM insurance_analysis_sessions
-            ORDER BY created_at DESC
-            LIMIT ? OFFSET ?`,
-      args: [limit, offset],
-    });
+    const rows = await db.select({
+      id: insuranceAnalysisSessions.id,
+      clientName: insuranceAnalysisSessions.clientName,
+      clientIC: insuranceAnalysisSessions.clientIC,
+      annualIncome: insuranceAnalysisSessions.annualIncome,
+      monthlyBudget: insuranceAnalysisSessions.monthlyBudget,
+      createdAt: insuranceAnalysisSessions.createdAt,
+    })
+      .from(insuranceAnalysisSessions)
+      .orderBy(desc(insuranceAnalysisSessions.createdAt))
+      .limit(limit)
+      .offset(offset)
+      .all();
 
-    const sessions = (rows.rows || []).map((row: Record<string, unknown>) => ({
+    const sessions = rows.map((row: Record<string, unknown>) => ({
       id: row.id as string,
-      clientName: row.client_name as string,
-      clientIC: (row.client_ic as string)?.replace(/.(?=.{4})/g, '*'), // mask IC
-      annualIncome: row.annual_income as number,
-      monthlyBudget: row.monthly_budget as number,
-      createdAt: row.created_at as number,
-      date: new Date((row.created_at as number) * 1000).toLocaleDateString('en-MY', {
+      clientName: (row.clientName as string) || '',
+      clientIC: (row.clientIC as string)?.replace(/.(?=.{4})/g, '*') || '',
+      annualIncome: row.annualIncome as number,
+      monthlyBudget: row.monthlyBudget as number,
+      createdAt: row.createdAt as number,
+      date: new Date((row.createdAt as number) * 1000).toLocaleDateString('en-MY', {
         day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
       }),
     }));

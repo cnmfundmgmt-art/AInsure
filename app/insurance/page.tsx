@@ -534,6 +534,17 @@ export default function InsurancePreview() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [sessionId] = useState(() => {
+    if (typeof window !== 'undefined') {
+      let id = sessionStorage.getItem('insurance_session_id');
+      if (!id) {
+        id = 'sess_' + Math.random().toString(36).slice(2, 12);
+        sessionStorage.setItem('insurance_session_id', id);
+      }
+      return id;
+    }
+    return 'sess_' + Math.random().toString(36).slice(2, 12);
+  });
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Form state
@@ -592,6 +603,41 @@ export default function InsurancePreview() {
       })
       .catch(() => {});
   }, []);
+
+  // Load chat history from DB when sessionId changes
+  useEffect(() => {
+    if (!sessionId) return;
+    fetch(`/api/chat/${sessionId}/messages?limit=100`)
+      .then(r => r.json())
+      .then(d => {
+        if (d.messages && d.messages.length > 0) {
+          const restored: Message[] = d.messages.map((m: { role: string; content: string }, i: number) => ({
+            id: `restored-${i}`,
+            role: m.role as 'user' | 'assistant',
+            content: m.content,
+          }));
+          setMessages(restored);
+          setHydrated(true);
+        } else {
+          setMessages([{
+            id: nanoid(),
+            role: 'assistant',
+            type: 'welcome',
+            content: `👋 Hi! I'm your AI Insurance Strategist.\n\nComplete the intake form on the left, then ask me about coverage recommendations, product comparisons, or pitch scripts.`,
+          }]);
+          setHydrated(true);
+        }
+      })
+      .catch(() => {
+        setMessages([{
+          id: nanoid(),
+          role: 'assistant',
+          type: 'welcome',
+          content: `👋 Hi! I'm your AI Insurance Strategist.\n\nComplete the intake form on the left, then ask me about coverage recommendations, product comparisons, or pitch scripts.`,
+        }]);
+        setHydrated(true);
+      });
+  }, [sessionId]);
 
   // Load financial snapshot when client selected
   useEffect(() => {
@@ -684,13 +730,29 @@ export default function InsurancePreview() {
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
-  // Persist messages to sessionStorage on change
+  // Persist messages to DB + sessionStorage on change
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    if (typeof window === 'undefined' || !hydrated) return;
+    if (messages.length === 0) return;
+
+    // Save to sessionStorage as backup
     try {
       sessionStorage.setItem('insurance_messages', JSON.stringify(messages));
     } catch { /* ignore quota errors */ }
-  }, [messages]);
+
+    // Save last assistant message to DB (async, non-blocking)
+    const lastMsg = messages[messages.length - 1];
+    if (lastMsg.role === 'assistant' && lastMsg.content && sessionId) {
+      fetch(`/api/chat/${sessionId}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          role: lastMsg.role,
+          content: lastMsg.content,
+        }),
+      }).catch(() => {}); // fire and forget
+    }
+  }, [messages, hydrated, sessionId]);
 
   const sendMessage = useCallback(async (text: string, attachedFiles?: Attachment[]) => {
     if (!text.trim() && (!attachedFiles || attachedFiles.length === 0) || loading) return;
