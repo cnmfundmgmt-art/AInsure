@@ -68,6 +68,21 @@ function fmtBudget(n: number) {
   return 'RM' + n.toLocaleString('en-MY') + '/mo';
 }
 
+function stripMarkdown(text: string): string {
+  if (!text) return '';
+  return text
+    .replace(/#{1,6}\s+/g, '')       // headers
+    .replace(/\*\*([^*]+)\*\*/g, '$1') // bold
+    .replace(/\*([^*]+)\*/g, '$1')      // italic
+    .replace(/`{1,3}[^`]*`{1,3}/g, '') // code
+    .replace(/\|/g, ' ')               // table pipes
+    .replace(/[-–—]{2,}/g, ' ')        // hr/dashes
+    .replace(/\n{2,}/g, ' ')           // multiple newlines
+    .replace(/\n/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
 const SUGGESTIONS = [
   'Show gap analysis',
   'Compare Great Eastern vs AIA',
@@ -565,7 +580,7 @@ export default function InsurancePreview() {
     investmentPreference: null,
   });
 
-// Restore messages from sessionStorage and set welcome message — runs once after mount
+// Restore messages from sessionStorage — runs once after mount
   useEffect(() => {
     try {
       const saved = sessionStorage.getItem('insurance_messages');
@@ -579,14 +594,7 @@ export default function InsurancePreview() {
       }
     } catch { /* ignore */ }
 
-    // No saved history — set welcome message
-    setMessages([{
-      id: nanoid(),
-      role: 'assistant',
-      type: 'welcome',
-      content: `👋 Hi! I'm your AI Insurance Strategist.\n\nComplete the intake form on the left, then ask me about coverage recommendations, product comparisons, or pitch scripts.`,
-    }]);
-    setHydrated(true);
+    // No sessionStorage — wait for DB load to set messages and hydrated
   }, []);
 
   // Fetch role and clients on mount
@@ -716,49 +724,33 @@ export default function InsurancePreview() {
     setAttachments(prev => prev.filter(a => a.id !== id));
   };
 
-  // Welcome message
+  // Welcome message — only add if not yet hydrated and no messages
   useEffect(() => {
-    if (messages.length === 0) {
-      setMessages([{ 
-        id: nanoid(), 
-        role: 'assistant', 
-        type: 'welcome',
-        content: `👋 Hi! I'm your AI Insurance Strategist.\n\nComplete the intake form on the left, then ask me about coverage recommendations, product comparisons, or pitch scripts.`,
-      }]);
-    }
-  }, []);
+    if (hydrated) return;
+    setMessages([{
+      id: nanoid(),
+      role: 'assistant',
+      type: 'welcome',
+      content: `👋 Hi! I'm your AI Insurance Strategist.\n\nComplete the intake form on the left, then ask me about coverage recommendations, product comparisons, or pitch scripts.`,
+    }]);
+    setHydrated(true);
+  }, [hydrated]);
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
-  // Persist messages to DB + sessionStorage on change
+  // Persist to sessionStorage only (DB save handled in sendMessage's finally block)
   useEffect(() => {
     if (typeof window === 'undefined' || !hydrated) return;
     if (messages.length === 0) return;
-
-    // Save to sessionStorage as backup
     try {
       sessionStorage.setItem('insurance_messages', JSON.stringify(messages));
     } catch { /* ignore quota errors */ }
-
-    // Save last assistant message to DB (async, non-blocking)
-    const lastMsg = messages[messages.length - 1];
-    if (lastMsg.role === 'assistant' && lastMsg.content && sessionId) {
-      fetch(`/api/chat/${sessionId}/messages`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          role: lastMsg.role,
-          content: lastMsg.content,
-        }),
-      }).catch(() => {}); // fire and forget
-    }
-  }, [messages, hydrated, sessionId]);
+  }, [messages, hydrated]);
 
   const sendMessage = useCallback(async (text: string, attachedFiles?: Attachment[]) => {
     if (!text.trim() && (!attachedFiles || attachedFiles.length === 0) || loading) return;
     const files = attachedFiles || attachments;
 
-    // Build history from messages state (strip extra fields, keep role + content only)
     const history: Array<{ role: 'user' | 'assistant'; content: string }> = messages
       .filter(m => m.role === 'user' || m.role === 'assistant')
       .map(m => ({ role: m.role, content: m.content || '' }));
@@ -769,6 +761,9 @@ export default function InsurancePreview() {
     setLoading(true);
     setAttachments([]);
 
+    let assistantMsgId = '';
+    let finalContent = '';
+
     try {
       const client = buildClientForAPI(form);
       const res = await fetch('/api/insurance/recommend', {
@@ -778,6 +773,7 @@ export default function InsurancePreview() {
       });
       const assistantMsg: Message = { id: nanoid(), role: 'assistant', content: '' };
       setMessages(prev => [...prev, assistantMsg]);
+      assistantMsgId = assistantMsg.id;
 
       const reader = res.body?.getReader();
       const decoder = new TextDecoder();
@@ -797,12 +793,27 @@ export default function InsurancePreview() {
         assistantMsg.content = 'Failed to read response stream';
         setMessages(prev => prev.map(m => m.id === assistantMsg.id ? { ...m, content: assistantMsg.content } : m));
       }
+      finalContent = assistantMsg.content;
     } catch (err) {
       toast.error('Failed to get response');
     } finally {
       setLoading(false);
+      if (sessionId && text) {
+        fetch(`/api/chat/${sessionId}/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ role: 'user', content: text }),
+        }).catch(() => {});
+      }
+      if (sessionId && finalContent) {
+        fetch(`/api/chat/${sessionId}/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ role: 'assistant', content: finalContent }),
+        }).catch(() => {});
+      }
     }
-  }, [form, loading, attachments, messages]);
+  }, [form, sessionId, attachments, messages]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -940,7 +951,7 @@ export default function InsurancePreview() {
                       <span className="text-gray-400 text-[10px]">#{i + 1}</span>
                     </div>
                     <p className="text-gray-700 leading-relaxed line-clamp-4">
-                      {msg.content?.slice(0, 200)}{msg.content && msg.content.length > 200 ? '…' : ''}
+                      {stripMarkdown(msg.content || '').slice(0, 200)}{msg.content && msg.content.length > 200 ? '…' : ''}
                     </p>
                   </div>
                 );
