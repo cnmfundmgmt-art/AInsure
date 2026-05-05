@@ -549,17 +549,8 @@ export default function InsurancePreview() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
-  const [sessionId] = useState(() => {
-    if (typeof window !== 'undefined') {
-      let id = sessionStorage.getItem('insurance_session_id');
-      if (!id) {
-        id = 'sess_' + Math.random().toString(36).slice(2, 12);
-        sessionStorage.setItem('insurance_session_id', id);
-      }
-      return id;
-    }
-    return 'sess_' + Math.random().toString(36).slice(2, 12);
-  });
+  const [sessionId, setSessionId] = useState<string>('');
+  const [hasMoreMessages, setHasMoreMessages] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Form state
@@ -580,21 +571,28 @@ export default function InsurancePreview() {
     investmentPreference: null,
   });
 
-// Restore messages from sessionStorage — runs once after mount
+// Mount: find last session or create new one
   useEffect(() => {
-    try {
-      const saved = sessionStorage.getItem('insurance_messages');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setMessages(parsed);
-          setHydrated(true);
-          return;
+    fetch('/api/chat/last-session')
+      .then(r => r.json())
+      .then(d => {
+        if (d.sessionId) {
+          const stored = sessionStorage.getItem('insurance_session_id');
+          if (stored !== d.sessionId) {
+            sessionStorage.setItem('insurance_session_id', d.sessionId);
+          }
+          setSessionId(d.sessionId);
+        } else {
+          const newId = 'sess_' + Math.random().toString(36).slice(2, 12);
+          sessionStorage.setItem('insurance_session_id', newId);
+          setSessionId(newId);
         }
-      }
-    } catch { /* ignore */ }
-
-    // No sessionStorage — wait for DB load to set messages and hydrated
+      })
+      .catch(() => {
+        const newId = 'sess_' + Math.random().toString(36).slice(2, 12);
+        sessionStorage.setItem('insurance_session_id', newId);
+        setSessionId(newId);
+      });
   }, []);
 
   // Fetch role and clients on mount
@@ -612,19 +610,19 @@ export default function InsurancePreview() {
       .catch(() => {});
   }, []);
 
-  // Load chat history from DB when sessionId changes
-  useEffect(() => {
-    if (!sessionId) return;
-    fetch(`/api/chat/${sessionId}/messages?limit=100`)
+  // Load chat history from DB when sessionId changes (last 50 only)
+  const loadChatHistory = useCallback((sid: string, prepend = false) => {
+    fetch(`/api/chat/${sid}/messages?limit=50`)
       .then(r => r.json())
       .then(d => {
         if (d.messages && d.messages.length > 0) {
           const restored: Message[] = d.messages.map((m: { role: string; content: string }, i: number) => ({
-            id: `restored-${i}`,
+            id: `restored-${sid}-${i}`,
             role: m.role as 'user' | 'assistant',
             content: m.content,
           }));
-          setMessages(restored);
+          setMessages(prev => prepend ? [...restored, ...prev] : restored);
+          setHasMoreMessages(d.messages.length >= 50);
           setHydrated(true);
         } else {
           setMessages([{
@@ -633,6 +631,7 @@ export default function InsurancePreview() {
             type: 'welcome',
             content: `👋 Hi! I'm your AI Insurance Strategist.\n\nComplete the intake form on the left, then ask me about coverage recommendations, product comparisons, or pitch scripts.`,
           }]);
+          setHasMoreMessages(false);
           setHydrated(true);
         }
       })
@@ -643,9 +642,15 @@ export default function InsurancePreview() {
           type: 'welcome',
           content: `👋 Hi! I'm your AI Insurance Strategist.\n\nComplete the intake form on the left, then ask me about coverage recommendations, product comparisons, or pitch scripts.`,
         }]);
+        setHasMoreMessages(false);
         setHydrated(true);
       });
-  }, [sessionId]);
+  }, []);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    loadChatHistory(sessionId);
+  }, [sessionId, loadChatHistory]);
 
   // Load financial snapshot when client selected
   useEffect(() => {
@@ -753,6 +758,7 @@ export default function InsurancePreview() {
 
     const history: Array<{ role: 'user' | 'assistant'; content: string }> = messages
       .filter(m => m.role === 'user' || m.role === 'assistant')
+      .slice(-20)
       .map(m => ({ role: m.role, content: m.content || '' }));
 
     const userMsg: Message = { id: nanoid(), role: 'user', content: text, attachments: files.length > 0 ? files : undefined };
