@@ -833,7 +833,7 @@ export default function InsurancePreview() {
         assistantMsg.content = 'Failed to read response stream';
         setMessages(prev => prev.map(m => m.id === assistantMsg.id ? { ...m, content: assistantMsg.content } : m));
       }
-      finalContent = assistantMsg.content;
+      finalContent = assistantMsg.content || '';
     } catch (err) {
       toast.error('Failed to get response');
     } finally {
