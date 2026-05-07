@@ -587,8 +587,14 @@ export default function InsurancePreview() {
     investmentPreference: null,
   });
 
-// Mount: find last session or create new one, then load history
+// Mount: warm up server, then load session
   useEffect(() => {
+    fetchWithRetry('/api/insurance/recommend', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client: { age: 30, income: 0 }, query: 'ping', history: [] }),
+    }, 1, 1000).catch(() => {});
+
     fetchWithRetry('/api/chat/last-session')
       .then(r => r.json())
       .then(d => {
@@ -809,7 +815,11 @@ export default function InsurancePreview() {
     const history: Array<{ role: 'user' | 'assistant'; content: string }> = messages
       .filter(m => m.role === 'user' || m.role === 'assistant')
       .slice(-20)
-      .map(m => ({ role: m.role, content: m.content || '' }));
+      .map(m => {
+        const content = m.content || '';
+        const stripped = content.replace(/data:[^;]+;base64,[A-Za-z0-9+/=]{100,}/g, '[attachment]');
+        return { role: m.role, content: stripped };
+      });
 
     const userMsg: Message = { id: nanoid(), role: 'user', content: text, attachments: files.length > 0 ? files : undefined };
     setMessages(prev => [...prev, userMsg]);
