@@ -532,11 +532,14 @@ function IntakeWizard({ form, updateForm, step, setStep, confirmed, setConfirmed
 }
 
 // --- Retry helper for Render cold-start ---
-async function fetchWithRetry(url: string, options?: RequestInit, retries = 3, delayMs = 1500): Promise<Response> {
+async function fetchWithRetry(url: string, options?: RequestInit, retries = 4, delayMs = 2000, timeoutMs = 15000): Promise<Response> {
   let lastErr: Error | null = null;
   for (let i = 0; i < retries; i++) {
     try {
-      const res = await fetch(url, options);
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+      const res = await fetch(url, { ...options, signal: ctrl.signal });
+      clearTimeout(timer);
       if (res.ok || i === retries - 1) return res;
       throw new Error(`HTTP ${res.status}`);
     } catch (e) {
