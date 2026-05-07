@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@libsql/client';
 import { getSession } from '@/lib/auth/session';
 
-const DATABASE_URL = process.env.DATABASE_URL || 'file:./data/cfp_local.db';
+const DATABASE_URL = process.env.TURSO_DATABASE_URL || process.env.DATABASE_URL || 'file:./data/cfp_local.db';
+const DATABASE_AUTH = process.env.TURSO_AUTH_TOKEN;
 const MINIMAX_API_KEY = process.env.MINIMAX_API_KEY || '';
 const MINIMAX_BASE_URL = process.env.MINIMAX_BASE_URL || 'https://api.minimax.io/anthropic/v1';
 const MINIMAX_FILE_URL = 'https://api.minimax.io/v1/files/upload';
@@ -314,7 +315,7 @@ export async function POST(req: NextRequest) {
     const sid = sessionId || ('sess_' + Math.random().toString(36).slice(2, 12));
     const now = Math.floor(Date.now() / 1000);
 
-    const db = createClient({ url: DATABASE_URL });
+    const db = createClient({ url: DATABASE_URL, authToken: DATABASE_AUTH });
 
     if (query && advisorId) {
       await db.execute({
