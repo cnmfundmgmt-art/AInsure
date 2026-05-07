@@ -861,65 +861,268 @@ export default function InsurancePreview() {
   };
 
   const handlePrint = () => {
-    const conversation = messages
-      .filter(m => m.content)
-      .map((m, i) => {
-        const role = m.role === 'user' ? 'Client' : 'AI Strategist';
-        const content = m.content || '';
-        const htmlContent = content
-          .replace(/\n/g, '<br/>')
-          .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-          .replace(/^#{1,6}\s+(.*)$/gm, '<h3>$1</h3>')
-          .replace(/^\s*[-*]\s+(.*)$/gm, '<li>$1</li>')
-          .replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>')
-          .replace(/\|(.+)\|/g, (match) => {
-            const cells = match.split('|').map(c => c.trim());
-            const isHeader = cells.every(c => c.match(/^-+$/));
-            if (isHeader) return '';
-            const tag = 'td';
-            return `<tr>${cells.map(c => `<${tag}>${c}</${tag}>`).join('')}</tr>`;
+    const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
+    const now = new Date().toLocaleString('en-MY', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+    const fmtContent = (content: string): string => {
+      if (!content) return '<em>Loading...</em>';
+      let html = content;
+
+      html = html
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+        .replace(/^## (.+)$/gm, '<h2 style="font-size:17px;margin:16px 0 8px;font-weight:700;">$1</h2>')
+        .replace(/^# (.+)$/gm, '<h1 style="font-size:19px;margin:16px 0 8px;font-weight:700;">$1</h1>');
+
+      const lines = html.split('\n');
+      let result = '';
+      let inTable = false;
+      const tableRows: string[] = [];
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const cells = line.split('|').map((c: string) => c.trim()).filter((c: string) => c);
+
+        if (cells.length > 1 && cells.every((c: string) => c.match(/^-+$/))) {
+          inTable = false;
+          result += '<table class="msg-table"><tbody>';
+          tableRows.forEach((row: string) => {
+            const r = row.split('|').map((c: string) => c.trim()).filter((c: string) => c);
+            result += '<tr>' + r.map((c: string) => '<td>' + c + '</td>').join('') + '</tr>';
           });
-        return `<div style="margin-bottom:20px;padding:12px;border-radius:8px;${m.role === 'user' ? 'background:#EEF2FF;' : 'background:#F9FAFB;border:1px solid #E5E7EB;'}"><strong style="color:${m.role === 'user' ? '#4F46E5' : '#059669'}">${role}:</strong><div style="margin-top:8px;line-height:1.6;">${htmlContent || '<em>Loading...</em>'}</div></div>`;
-      }).join('');
+          result += '</tbody></table>';
+          tableRows.length = 0;
+          continue;
+        }
+
+        if (cells.length > 1 && !line.match(/^\s*[-*]/)) {
+          if (!inTable) { inTable = true; }
+          tableRows.push(line);
+          continue;
+        }
+
+        if (inTable && (cells.length <= 1 || line.match(/^\s*[-*]/))) {
+          inTable = false;
+          result += '<table class="msg-table"><tbody>';
+          tableRows.forEach((row: string) => {
+            const r = row.split('|').map((c: string) => c.trim()).filter((c: string) => c);
+            result += '<tr>' + r.map((c: string) => '<td>' + c + '</td>').join('') + '</tr>';
+          });
+          result += '</tbody></table>';
+          tableRows.length = 0;
+        }
+
+        if (!inTable) {
+          let processed = line
+            .replace(/^- (.+)$/gm, '<li>$1</li>')
+            .replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>');
+          result += processed + '\n';
+        }
+      }
+
+      if (inTable) {
+        result += '<table class="msg-table"><tbody>';
+        tableRows.forEach((row: string) => {
+          const r = row.split('|').map((c: string) => c.trim()).filter((c: string) => c);
+          result += '<tr>' + r.map((c: string) => '<td>' + c + '</td>').join('') + '</tr>';
+        });
+        result += '</tbody></table>';
+      }
+
+      result = result.replace(/\n/g, '<br/>');
+      return result;
+    };
+
+    const conversationHtml = messages.filter(m => m.content).map((m) => `
+      <div class="message ${m.role === 'user' ? 'user' : 'ai'}">
+        <div class="message-role">${m.role === 'user' ? '👤 Client' : '🤖 AI Strategist'}</div>
+        <div class="message-content">${fmtContent(m.content || '')}</div>
+      </div>
+    `).join('');
 
     const clientInfo = `
-      <div style="background:#F9FAFB;border:1px solid #E5E7EB;border-radius:8px;padding:16px;margin-bottom:24px;">
-        <h2 style="margin:0 0 8px;font-size:16px;">Client Profile</h2>
-        <p style="margin:4px 0;font-size:13px;"><strong>Name:</strong> ${form.name || 'Client'}</p>
-        <p style="margin:4px 0;font-size:13px;"><strong>Age:</strong> ${form.age} yrs</p>
-        <p style="margin:4px 0;font-size:13px;"><strong>Gender:</strong> ${form.gender || 'N/A'}</p>
-        <p style="margin:4px 0;font-size:13px;"><strong>Income:</strong> RM ${Number(form.annualIncome || 0).toLocaleString()}/year</p>
-        <p style="margin:4px 0;font-size:13px;"><strong>Budget:</strong> RM ${Number(form.monthlyBudget || 0).toLocaleString()}/month</p>
-        <p style="margin:4px 0;font-size:13px;"><strong>Dependents:</strong> ${form.dependents || 0}</p>
+      <div class="profile-card">
+        <div class="profile-header">
+          <div class="profile-avatar">${(form.name || 'C').charAt(0).toUpperCase()}</div>
+          <div>
+            <h2 class="profile-name">${form.name || 'Client'}</h2>
+            <p class="profile-meta">${form.age} yrs · ${form.gender || 'N/A'} · ${form.dependents || 0} dependent${(form.dependents || 0) !== 1 ? 's' : ''}</p>
+          </div>
+        </div>
+        <div class="profile-grid">
+          <div class="stat"><span class="stat-label">Annual Income</span><span class="stat-value">RM ${Number(form.annualIncome || 0).toLocaleString()}</span></div>
+          <div class="stat"><span class="stat-label">Monthly Budget</span><span class="stat-value">RM ${Number(form.monthlyBudget || 0).toLocaleString()}</span></div>
+          <div class="stat"><span class="stat-label">Risk Profile</span><span class="stat-value">${(form as any).riskProfile || 'Not set'}</span></div>
+          <div class="stat"><span class="stat-label">Goals</span><span class="stat-value">${(form as any).goals || 'General protection'}</span></div>
+        </div>
       </div>`;
 
     const html = `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>Insurance Report - ${new Date().toLocaleDateString('en-MY')}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Insurance Strategy Report - ${now}</title>
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 32px; max-width: 800px; margin: 0 auto; color: #111; }
-    h1 { font-size: 22px; margin-bottom: 4px; }
-    .date { color: #666; font-size: 13px; margin-bottom: 24px; }
-    table { border-collapse: collapse; width: 100%; font-size: 13px; }
-    th, td { border: 1px solid #E5E7EB; padding: 8px 12px; text-align: left; }
-    th { background: #F3F4F6; font-weight: 600; }
-    tr:nth-child(even) { background: #F9FAFB; }
-    h3 { font-size: 15px; margin: 16px 0 8px; color: #1F2937; }
-    ul { margin: 4px 0; padding-left: 20px; }
-    @media print { body { padding: 16px; } }
+    :root {
+      --bg: #ffffff;
+      --surface: #f8fafc;
+      --border: #e2e8f0;
+      --text: #0f172a;
+      --text-muted: #64748b;
+      --primary: #4f46e5;
+      --primary-light: #eef2ff;
+      --success: #059669;
+      --success-light: #ecfdf5;
+      --warning: #d97706;
+      --warning-light: #fffbeb;
+      --danger: #dc2626;
+      --danger-light: #fef2f2;
+      --radius: 12px;
+      --shadow: 0 1px 3px rgba(0,0,0,0.1), 0 1px 2px rgba(0,0,0,0.06);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); font-size: 16px; line-height: 1.6; padding: 24px; max-width: 900px; margin: 0 auto; }
+    .sticky-header { position: sticky; top: 0; background: var(--bg); border-bottom: 2px solid var(--primary); padding: 16px 0; margin-bottom: 32px; display: flex; justify-content: space-between; align-items: center; z-index: 100; }
+    .sticky-header h1 { font-size: 22px; display: flex; align-items: center; gap: 10px; }
+    .print-btn { background: var(--primary); color: white; border: none; padding: 10px 20px; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px; }
+    .print-btn:hover { background: #4338ca; }
+    .profile-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; margin-bottom: 32px; box-shadow: var(--shadow); }
+    .profile-header { display: flex; align-items: center; gap: 16px; margin-bottom: 20px; }
+    .profile-avatar { width: 56px; height: 56px; background: var(--primary); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: 700; }
+    .profile-name { font-size: 20px; font-weight: 700; }
+    .profile-meta { color: var(--text-muted); font-size: 14px; }
+    .profile-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; }
+    .stat { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; }
+    .stat-label { display: block; font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+    .stat-value { font-size: 16px; font-weight: 700; color: var(--text); }
+    .section { margin-bottom: 32px; }
+    .section-title { font-size: 18px; font-weight: 700; margin-bottom: 16px; padding-bottom: 8px; border-bottom: 2px solid var(--border); display: flex; align-items: center; gap: 8px; }
+    .gap-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px; }
+    .gap-card { border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; text-align: center; box-shadow: var(--shadow); }
+    .gap-card.life { border-top: 4px solid var(--danger); }
+    .gap-card.ci { border-top: 4px solid var(--warning); }
+    .gap-card.medical { border-top: 4px solid var(--success); }
+    .gap-label { font-size: 13px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+    .gap-value { font-size: 24px; font-weight: 800; margin-bottom: 4px; }
+    .gap-bar { height: 8px; background: var(--surface); border-radius: 4px; overflow: hidden; margin-top: 12px; }
+    .gap-bar-fill { height: 100%; border-radius: 4px; transition: width 0.5s; }
+    .badge { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+    .badge.recommended { background: var(--success-light); color: var(--success); }
+    .badge.within-budget { background: var(--primary-light); color: var(--primary); }
+    .badge.gap { background: var(--danger-light); color: var(--danger); }
+    .badge.caution { background: var(--warning-light); color: var(--warning); }
+    .options-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    .option-card { border: 2px solid var(--border); border-radius: var(--radius); padding: 20px; position: relative; }
+    .option-card.top { border-color: var(--primary); box-shadow: 0 0 0 4px var(--primary-light); }
+    .option-badge { position: absolute; top: -12px; left: 50%; transform: translateX(-50%); background: var(--primary); color: white; padding: 4px 16px; border-radius: 20px; font-size: 12px; font-weight: 700; }
+    .option-name { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
+    .option-provider { font-size: 13px; color: var(--text-muted); margin-bottom: 16px; }
+    .option-detail { display: flex; justify-content: space-between; font-size: 14px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+    .option-detail:last-of-type { border-bottom: none; }
+    .option-detail-label { color: var(--text-muted); }
+    .option-detail-value { font-weight: 600; }
+    .option-premium { background: var(--primary-light); border-radius: 8px; padding: 16px; text-align: center; margin-top: 16px; }
+    .option-premium-label { font-size: 12px; color: var(--text-muted); text-transform: uppercase; }
+    .option-premium-value { font-size: 28px; font-weight: 800; color: var(--primary); }
+    .option-premium-sub { font-size: 13px; color: var(--text-muted); }
+    .message { border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; margin-bottom: 16px; background: var(--surface); }
+    .message.user { background: var(--primary-light); border-color: var(--primary); }
+    .message-role { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+    .message.user .message-role { color: var(--primary); }
+    .message.ai .message-role { color: var(--success); }
+    .message-content { font-size: 15px; line-height: 1.7; }
+    .message-content h1, .message-content h2, .message-content h3 { font-size: 16px; font-weight: 700; margin: 12px 0 8px; }
+    .message-content table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
+    .message-content th { background: var(--border); padding: 8px 12px; text-align: left; font-weight: 600; }
+    .message-content td { padding: 8px 12px; border-bottom: 1px solid var(--border); }
+    .message-content tr:nth-child(even) { background: var(--surface); }
+    .message-content ul, .message-content ol { padding-left: 24px; margin: 8px 0; }
+    .message-content li { margin: 4px 0; }
+    .message-content strong { font-weight: 700; }
+    .footer { margin-top: 48px; padding-top: 24px; border-top: 2px solid var(--border); text-align: center; }
+    .footer p { font-size: 13px; color: var(--text-muted); margin: 4px 0; }
+    .footer .disclaimer { font-size: 12px; color: #94a3b8; margin-top: 8px; }
+    @media (max-width: 768px) {
+      .gap-grid, .options-grid { grid-template-columns: 1fr; }
+      .profile-grid { grid-template-columns: 1fr 1fr; }
+      .message-content table { font-size: 13px; }
+    }
+    @media print {
+      .sticky-header { position: static; }
+      .print-btn { display: none; }
+      body { padding: 16px; font-size: 14px; }
+      .gap-grid, .options-grid { grid-template-columns: repeat(3, 1fr); }
+      .message { break-inside: avoid; }
+    }
   </style>
 </head>
 <body>
-  <h1>🛡️ Insurance Strategy Report</h1>
-  <p class="date">Generated: ${new Date().toLocaleString('en-MY', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
-  ${clientInfo}
-  ${conversation}
-  <div style="margin-top:32px;padding-top:16px;border-top:1px solid #E5E7EB;font-size:11px;color:#666;">
-    <p>This report is generated by AI Insurance Strategist · CFP Malaysia</p>
-    <p>Recommendations should be verified with a licensed financial advisor.</p>
+  <div class="sticky-header">
+    <h1>🛡️ Insurance Strategy Report</h1>
+    <div>
+      <p style="font-size:13px;color:var(--text-muted);margin-right:12px;display:inline;">${now}</p>
+      <button class="print-btn" onclick="window.print()">📄 Export PDF</button>
+    </div>
   </div>
+
+  ${clientInfo}
+
+  <div class="section">
+    <h3 class="section-title">📊 Protection Gap Overview</h3>
+    <div class="gap-grid">
+      <div class="gap-card life">
+        <div class="gap-label">Life Protection</div>
+        <div class="gap-value" style="color:var(--danger);">RM ${Number(form.annualIncome * 8 || 0).toLocaleString()}</div>
+        <p style="font-size:12px;color:var(--text-muted);">8× annual income</p>
+        <div class="gap-bar"><div class="gap-bar-fill" style="width:100%;background:var(--danger);"></div></div>
+      </div>
+      <div class="gap-card ci">
+        <div class="gap-label">Critical Illness</div>
+        <div class="gap-value" style="color:var(--warning);">RM ${Number(Math.max(form.annualIncome * 3, 150000) || 0).toLocaleString()}</div>
+        <p style="font-size:12px;color:var(--text-muted);">3× income (min RM150k)</p>
+        <div class="gap-bar"><div class="gap-bar-fill" style="width:100%;background:var(--warning);"></div></div>
+      </div>
+      <div class="gap-card medical">
+        <div class="gap-label">Medical / Hospital</div>
+        <div class="gap-value" style="color:var(--success);">RM 1,000,000</div>
+        <p style="font-size:12px;color:var(--text-muted);">Minimum recommended</p>
+        <div class="gap-bar"><div class="gap-bar-fill" style="width:100%;background:var(--success);"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3 class="section-title">💡 AI Recommendations</h3>
+    <div style="background:var(--primary-light);border:1px solid var(--primary);border-radius:var(--radius);padding:20px;margin-bottom:16px;">
+      <p style="font-size:14px;color:var(--primary);font-weight:600;margin-bottom:8px;">Based on your profile, we recommend reviewing these priority areas:</p>
+      <ul style="font-size:14px;padding-left:20px;color:var(--text);">
+        <li>Life protection gap of <strong>RM ${Number(form.annualIncome * 8 || 0).toLocaleString()}</strong> needs attention</li>
+        <li>Critical illness coverage should cover minimum <strong>RM ${Number(Math.max(form.annualIncome * 3, 150000) || 0).toLocaleString()}</strong></li>
+        <li>Medical coverage of <strong>RM 1,000,000</strong> provides adequate private hospital coverage</li>
+      </ul>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <span class="badge recommended">✅ Fully covered</span>
+      <span class="badge within-budget">⚡ Within budget</span>
+      <span class="badge gap">🚨 Gap detected</span>
+      <span class="badge caution">⚠️ Review recommended</span>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3 class="section-title">💬 Conversation History</h3>
+    ${conversationHtml}
+  </div>
+
+  <div class="footer">
+    <p><strong>CFP Malaysia · AI Insurance Strategist</strong></p>
+    <p>This report is AI-generated and for informational purposes only.</p>
+    <p class="disclaimer">Recommendations should be verified with a licensed financial advisor. Insurance products are subject to terms and conditions.</p>
+  </div>
+
 </body>
 </html>`;
 
@@ -928,7 +1131,7 @@ export default function InsurancePreview() {
       win.document.write(html);
       win.document.close();
       win.focus();
-      setTimeout(() => win.print(), 250);
+      setTimeout(() => win.print(), 500);
     }
   };
 
