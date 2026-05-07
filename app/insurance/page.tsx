@@ -595,7 +595,7 @@ export default function InsurancePreview() {
     fetchWithRetry('/api/insurance/recommend', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ client: { age: 30, income: 0 }, query: 'ping', history: [] }),
+      body: JSON.stringify({ client: { age: 30, income: 60000 }, query: 'ping', history: [] }),
     }, 1, 1000).catch(() => {});
 
     fetchWithRetry('/api/chat/last-session')
